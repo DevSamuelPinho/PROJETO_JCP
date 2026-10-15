@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Em Desenvolvimento — Jovens com Propósito</title>
+  <meta name="description" content="Esta página está em desenvolvimento. Em breve disponível.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-deep: #080d15;
+      --bg-night: #0a0f1a;
+      --color-primary: #008CFF;
+      --color-primary-glow: rgba(0, 140, 255, 0.35);
+      --text-main: #E2E8F0;
+      --text-light: #94A3B8;
+      --font-main: 'Inter', sans-serif;
+      --font-kicker: 'Bebas Neue', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg-deep);
+      color: var(--text-main);
+      font-family: var(--font-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Grid de fundo tecnológico */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0, 140, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 140, 255, 0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Glow central */
+    body::after {
+      content: '';
+      position: fixed;
+      width: 600px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(0, 140, 255, 0.12) 0%, transparent 70%);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 0;
+      animation: centralGlow 4s ease-in-out infinite;
+    }
+
+    @keyframes centralGlow {
+      0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+    }
+
+    .page-center {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 40px 24px;
+      max-width: 600px;
+      width: 100%;
+    }
+
+    /* Canto decorativo */
+    .corner { position: absolute; width: 20px; height: 20px; border-color: rgba(0,140,255,0.6); border-style: solid; }
+    .corner.tl { top: 0; left: 0; border-width: 2px 0 0 2px; }
+    .corner.tr { top: 0; right: 0; border-width: 2px 2px 0 0; }
+    .corner.bl { bottom: 0; left: 0; border-width: 0 0 2px 2px; }
+    .corner.br { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+    .container-tech {
+      position: relative;
+      background: rgba(10, 15, 26, 0.9);
+      border: 1px solid rgba(0, 140, 255, 0.2);
+      border-radius: 20px;
+      padding: 48px 40px;
+      width: 100%;
+      backdrop-filter: blur(12px);
+    }
+
+    .logo-wrap {
+      margin-bottom: 32px;
+    }
+
+    .logo-wrap img {
+      height: 52px;
+      filter: drop-shadow(0 0 16px rgba(0, 140, 255, 0.5));
+      animation: logoFloat 3s ease-in-out infinite;
+    }
+
+    @keyframes logoFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 140, 255, 0.1);
+      border: 1px solid rgba(0, 140, 255, 0.3);
+      border-radius: 999px;
+      padding: 6px 16px;
+      font-size: 0.72rem;
+      font-family: var(--font-kicker);
+      letter-spacing: 0.15em;
+      color: #38BDF8;
+      margin-bottom: 24px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      background: #38BDF8;
+      border-radius: 50%;
+      animation: blink 1.5s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+
+    h1 {
+      font-family: var(--font-kicker);
+      font-size: clamp(2.4rem, 8vw, 4rem);
+      letter-spacing: 0.06em;
+      color: #fff;
+      line-height: 1;
+      margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--color-primary); }
+
+    p.lead {
+      font-size: 1rem;
+      color: var(--text-light);
+      line-height: 1.7;
+      max-width: 420px;
+      margin: 0 auto 32px;
+    }
+
+    .divider {
+      width: 60px;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+      margin: 0 auto 28px;
+    }
+
+    .cta-row {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-kicker);
+      font-size: 0.9rem;
+      letter-spacing: 0.1em;
+      padding: 12px 28px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s, transform 0.15s;
+    }
+    .btn:hover { opacity: 0.85; transform: translateY(-1px); }
+
+    .btn-primary { background: var(--color-primary); color: #fff; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-main);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .footnote {
+      margin-top: 28px;
+      font-size: 0.75rem;
+      color: var(--text-light);
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-center">
+    <div class="container-tech">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+
+      <div class="logo-wrap">
+        <img src="assets/brand/vet_logo_horizontal.png" alt="Jovens com Propósito">
+      </div>
+
+      <div class="status-badge">
+        <div class="status-dot"></div>
+        EM DESENVOLVIMENTO
+      </div>
+
+      <h1>EM BREVE<br><span>DISPONÍVEL</span></h1>
+
+      <div class="divider"></div>
+
+      <p class="lead">
+        Estamos preparando o conteúdo detalhado desta edição. Em breve você poderá acessar
+        registros, testemunhos, fotos e muito mais sobre este momento especial do JCP.
+      </p>
+
+      <div class="cta-row">
+        <a href="index.html" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          Voltar ao Início
+        </a>
+        <a href="index.html#contribua" class="btn btn-secondary">
+          Contribua com o Projeto
+        </a>
+      </div>
+
+      <p class="footnote">JOVENS COM PROPÓSITO — JCP • "Existe vida no sertão da Paraíba"</p>
+    </div>
+  </div>
+</body>
+</html>

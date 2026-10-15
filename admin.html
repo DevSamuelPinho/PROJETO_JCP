@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JCP Admin - Painel de Gestão Oficial</title>
+    <!-- Brand Fonts: Plus Jakarta Sans & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="css/admin.css">
+    <!-- Supabase CDN & Configuração de Conexão Direta -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="js/supabase-config.js"></script>
+</head>
+<body>
+
+<!-- ==============================================================================
+     TELA DE LOGIN ADMINISTRATIVO (SEGURANÇA & SESSÃO)
+     ============================================================================== -->
+<div class="admin-login-screen" id="admin-login-screen" style="display: none;">
+    <div class="admin-login-box">
+        <div class="admin-login-header">
+            <div class="admin-login-logo">
+                <i class="ph ph-shield-check"></i>
+            </div>
+            <h2 class="admin-login-title">Acesso Restrito</h2>
+            <p class="admin-login-sub">Painel Administrativo — Projeto Jovens com Propósito</p>
+        </div>
+
+
+        <form id="form-admin-login" class="form-layout" style="gap: 14px;">
+            <div class="form-group">
+                <label for="login-email">E-mail Administrativo</label>
+                <input type="email" id="login-email" class="text-input" placeholder="admin@jcp.org" required>
+            </div>
+            <div class="form-group">
+                <label for="login-password">Senha</label>
+                <input type="password" id="login-password" class="text-input" placeholder="••••••••" required>
+            </div>
+            <div id="login-error-msg" style="display:none; color: var(--danger); font-size: 12px; font-weight: 600; text-align: center;"></div>
+            <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; height: 42px; margin-top: 6px;">
+                <i class="ph ph-sign-in"></i> Entrar no Painel
+            </button>
+            <div style="text-align: center; margin-top: 8px;">
+                <a href="index.html" class="btn-link" style="font-size: 12px;"><i class="ph ph-arrow-left"></i> Voltar ao site público</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="admin-layout" id="admin-main-layout">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo-img">
+                <img src="assets/brand/jcp_simbolo_isolado.svg" alt="JCP" style="width: 24px; height: 24px; filter: brightness(0) invert(1);" onerror="this.outerHTML='J'">
+            </div>
+            <div class="logo-text-group">
+                <span class="logo-title">PROJETO JCP</span>
+                <span class="logo-subtitle">Painel de Gestão</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <span class="nav-category">Visão Geral</span>
+            <a href="#dashboard" class="nav-item active" data-target="dashboard">
+                <i class="ph ph-squares-four"></i> Dashboard
+            </a>
+
+            <span class="nav-category">Missões & Ações</span>
+            <a href="#eventos" class="nav-item" data-target="eventos" data-perm="editions:read">
+                <i class="ph ph-calendar-check"></i> Edições & Missões
+            </a>
+            <a href="#acoes" class="nav-item" data-target="acoes" data-perm="actions:read">
+                <i class="ph ph-lightning"></i> Ações Missionárias
+            </a>
+
+            <span class="nav-category">Comunidade & Inscrições</span>
+            <a href="#membros" class="nav-item" data-target="membros" data-perm="volunteers:read">
+                <i class="ph ph-users"></i> Voluntários
+            </a>
+            <a href="#mensagens" class="nav-item" data-target="mensagens" data-perm="enrollments:read">
+                <i class="ph ph-clipboard-text"></i> Inscrições & Comprovantes
+                <span class="nav-badge" id="pending-badge">0</span>
+            </a>
+
+            <span class="nav-category">Institucional</span>
+            <a href="#lideres" class="nav-item" data-target="lideres" data-perm="leaders:read">
+                <i class="ph ph-users-three"></i> Cadastro de Lideres
+            </a>
+            <a href="#departamentos" class="nav-item" data-target="departamentos" data-perm="leaders:read">
+                <i class="ph ph-git-branch"></i> Departamentos
+            </a>
+
+            <span class="nav-category">Sistema</span>
+            <a href="#usuarios" class="nav-item" data-target="usuarios" data-perm="users:manage">
+                <i class="ph ph-user-gear"></i> Usuários & Perfis
+            </a>
+            <a href="#config" class="nav-item" data-target="config" data-perm="settings:write">
+                <i class="ph ph-gear"></i> Configurações Globais
+            </a>
+            <a href="#logs" class="nav-item" data-target="logs" data-perm="logs:read">
+                <i class="ph ph-scroll"></i> Auditoria / Logs
+            </a>
+        </nav>
+
+        <div class="user-profile">
+            <div class="avatar" id="sidebar-avatar">JS</div>
+            <div class="user-info">
+                <span class="user-name" id="sidebar-user-name">Administrador</span>
+                <span class="user-role" id="sidebar-user-role">Super Admin</span>
+            </div>
+            <button class="logout-btn" id="btn-sidebar-logout" title="Sair do Sistema"><i class="ph ph-sign-out"></i></button>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content">
+
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title" id="page-title">Dashboard</h1>
+                <p class="page-subtitle">Olá, <span id="topbar-user">Administrador</span> 👋 &nbsp;<span id="topbar-desc">Gestão completa e integrada ao banco de dados.</span></p>
+            </div>
+            <div class="topbar-right">
+                <div class="search-bar">
+                    <i class="ph ph-magnifying-glass"></i>
+                    <input type="text" placeholder="Buscar no sistema..." id="global-search-input">
+                </div>
+                <a href="index.html" target="_blank" class="btn-outline"><i class="ph ph-arrow-square-out"></i> Ver Site Público</a>
+                <button class="action-btn notification-btn" id="topbar-notification-btn" title="Notificações">
+                    <i class="ph ph-bell"></i>
+                    <span class="notification-dot" id="topbar-notif-dot" style="display:none"></span>
+                </button>
+            </div>
+        </header>
+
+        <div class="content-area">
+
+            <!-- ============================================ -->
+            <!-- 8. DASHBOARD (DADOS 100% REAIS DO BANCO)     -->
+            <!-- ============================================ -->
+            <section id="dashboard" class="admin-section active">
+
+                <!-- Cards com Estatísticas Reais -->
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Participantes</span>
+                            <i class="ph ph-user-list stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-participants">—</div>
+                        <span class="stat-sub">Cadastro Geral</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Voluntários</span>
+                            <i class="ph ph-hand-heart stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-volunteers">—</div>
+                        <span class="stat-sub">Disponíveis p/ Servir</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Edições</span>
+                            <i class="ph ph-calendar-check stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-editions">—</div>
+                        <span class="stat-sub" id="stat-editions-sub">Cadastradas</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Inscrições</span>
+                            <i class="ph ph-clipboard-text stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-enrollments">—</div>
+                        <span class="stat-sub neutral" id="stat-enrollments-sub">Total Realizado</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Ações</span>
+                            <i class="ph ph-lightning stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-actions">—</div>
+                        <span class="stat-sub">Atividades nas Edições</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Cidades</span>
+                            <i class="ph ph-map-pin stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-cities">—</div>
+                        <span class="stat-sub">Alcançadas</span>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">Arrecadação</span>
+                            <i class="ph ph-currency-circle-dollar stat-icon"></i>
+                        </div>
+                        <div class="stat-value" id="stat-raised" style="font-size: 24px;">R$ 0,00</div>
+                        <span class="stat-sub">Taxas & Contribuições</span>
+                    </div>
+                </div>
+
+                <!-- Duas Colunas do Dashboard -->
+                <div class="dashboard-grid">
+                    <div>
+                        <!-- Edições Recentes / Em Destaque -->
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title-group">
+                                    <span class="panel-title">Edições do Projeto</span>
+                                    <span class="panel-subtitle">Missões e encontros cadastrados no banco</span>
+                                </div>
+                                <a href="#eventos" class="btn-link" data-target="eventos">Ver Todas <i class="ph ph-caret-right"></i></a>
+                            </div>
+                            <div class="panel-body">
+                                <div class="event-list" id="dashboard-editions-list">
+                                    <div class="empty-state">Carregando edições...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Voluntários Recentes -->
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title-group">
+                                    <span class="panel-title">Últimos Voluntários Cadastrados</span>
+                                    <span class="panel-subtitle">Jovens com áreas de atuação selecionadas</span>
+                                </div>
+                                <a href="#membros" class="btn-link" data-target="membros">Ver Todos <i class="ph ph-caret-right"></i></a>
+                            </div>
+                            <div class="panel-body">
+                                <div class="volunteer-list" id="dashboard-volunteers-list">
+                                    <div class="empty-state">Carregando voluntários...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <!-- Inscrições Recentes -->
+                        <div class="panel">
+                            <div class="panel-header">
+                                <div class="panel-title-group">
+                                    <span class="panel-title">Inscrições Recentes</span>
+                                </div>
+                                <a href="#mensagens" class="btn-link" data-target="mensagens">Ver Todas</a>
+                            </div>
+                            <div class="panel-body">
+                                <div id="dashboard-enrollments-list">
+                                    <div class="empty-state">Carregando inscrições...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Auditoria Recente -->
+                        <div class="panel" id="dashboard-logs-panel">
+                            <div class="panel-header">
+                                <div class="panel-title-group">
+                                    <span class="panel-title">Auditoria Recente</span>
+                                    <span class="panel-subtitle">Atividades registradas no sistema</span>
+                                </div>
+                                <a href="#logs" class="btn-link" data-target="logs" id="dashboard-link-logs">Ver Logs</a>
+                            </div>
+                            <div class="panel-body">
+                                <div class="log-list" id="dashboard-logs-list">
+                                    <div class="empty-state">Carregando auditoria...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 1. EDIÇÕES (GERENCIAMENTO COMPLETO)          -->
+            <!-- ============================================ -->
+            <section id="eventos" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Edições & Missões</h2>
+                        <p class="section-desc">Crie, edite, gerencie inscrições e publique edições no site público.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-add-edition"><i class="ph ph-plus"></i> Nova Edição</button>
+                </div>
+
+                <div class="panel" style="margin-bottom: 20px;">
+                    <div class="panel-body" style="padding: 16px 20px;">
+                        <div class="filter-row" style="flex-wrap: wrap;">
+                            <div class="search-bar small">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" placeholder="Buscar edição..." id="edition-search-input">
+                            </div>
+                            <select class="select-input" id="edition-type-filter">
+                                <option value="">Todos os Tipos</option>
+                                <option value="Encontro">Encontro</option>
+                                <option value="Ação Evangelística">Ação Evangelística</option>
+                            </select>
+                            <select class="select-input" id="edition-status-filter">
+                                <option value="">Todos os Status</option>
+                                <option value="Planejamento">Planejamento</option>
+                                <option value="Inscrições Abertas">Inscrições Abertas</option>
+                                <option value="Inscrições Encerradas">Inscrições Encerradas</option>
+                                <option value="Em Andamento">Em Andamento</option>
+                                <option value="Finalizada">Finalizada</option>
+                                <option value="Cancelada">Cancelada</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grid de Cards de Edições -->
+                <div class="editions-grid" id="editions-container">
+                    <div class="empty-state">Carregando edições...</div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 4. AÇÕES VINCULADAS ÀS EDIÇÕES              -->
+            <!-- ============================================ -->
+            <section id="acoes" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Ações Missionárias</h2>
+                        <p class="section-desc">Cadastre e gerencie ações vinculadas a cada edição do projeto.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-add-action"><i class="ph ph-plus"></i> Nova Ação</button>
+                </div>
+
+                <div class="panel" style="margin-bottom: 20px;">
+                    <div class="panel-body" style="padding: 16px 20px;">
+                        <div class="filter-row">
+                            <label style="font-weight: 700; font-size: 12px; color: var(--text-muted); text-transform: uppercase;">Filtrar por Edição:</label>
+                            <select class="select-input" id="action-edition-filter" style="min-width: 280px;">
+                                <option value="">Todas as Edições</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="actions-container" id="actions-list-container">
+                    <div class="empty-state">Carregando ações...</div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 3. VOLUNTÁRIOS                               -->
+            <!-- ============================================ -->
+            <section id="membros" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Voluntários & Participantes</h2>
+                        <p class="section-desc">Rede de voluntários cadastrada com pastor, igreja e áreas ministeriais.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-add-volunteer"><i class="ph ph-user-plus"></i> Novo Cadastro</button>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="filter-row" style="flex-wrap: wrap;">
+                            <div class="search-bar small">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" placeholder="Buscar por nome, telefone..." id="volunteers-search">
+                            </div>
+                            <select class="select-input" id="volunteer-status-filter">
+                                <option value="">Todos os Status</option>
+                                <option value="Ativo">Ativo</option>
+                                <option value="Inativo">Inativo</option>
+                            </select>
+                            <select class="select-input" id="volunteer-area-filter">
+                                <option value="">Todas as Áreas</option>
+                                <option value="Pregação">Pregação</option>
+                                <option value="Músico">Músico</option>
+                                <option value="Cantor">Cantor</option>
+                                <option value="Apoio">Apoio</option>
+                                <option value="Logístico">Logístico</option>
+                                <option value="Fiscal">Fiscal</option>
+                                <option value="Mídia">Mídia</option>
+                                <option value="Serviço Social">Serviço Social</option>
+                                <option value="Outros">Outros</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Nome / Idade</th>
+                                    <th>Contato (Telefone ID / Email)</th>
+                                    <th>Localização</th>
+                                    <th>Pastor / Igreja</th>
+                                    <th>Áreas de Atuação</th>
+                                    <th>Status</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="volunteers-table-body">
+                                <tr><td colspan="7" class="empty-state">Carregando voluntários...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 2. INSCRIÇÕES & COMPROVANTES                 -->
+            <!-- ============================================ -->
+            <section id="mensagens" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Inscrições & Comprovantes</h2>
+                        <p class="section-desc">Validação de inscrições, comprovantes de pagamento e tamanhos de camisa.</p>
+                    </div>
+                    <button class="btn-outline" id="btn-export-enrollments"><i class="ph ph-export"></i> Exportar Inscrições (CSV)</button>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="filter-row" style="flex-wrap: wrap;">
+                            <select class="select-input" id="enrollment-edition-filter" style="min-width: 220px;">
+                                <option value="">Todas as Edições</option>
+                            </select>
+                            <select class="select-input" id="enrollment-status-filter">
+                                <option value="">Status da Inscrição</option>
+                                <option value="Pendente">Pendente</option>
+                                <option value="Confirmada">Confirmada</option>
+                                <option value="Cancelada">Cancelada</option>
+                            </select>
+                            <select class="select-input" id="enrollment-payment-filter">
+                                <option value="">Status do Pagamento</option>
+                                <option value="Isento">Isento</option>
+                                <option value="Pendente">Pendente</option>
+                                <option value="Comprovante Enviado">Comprovante Enviado</option>
+                                <option value="Aprovado">Aprovado</option>
+                                <option value="Rejeitado">Rejeitado</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Participante</th>
+                                    <th>Edição</th>
+                                    <th>Tipo / Tamanho</th>
+                                    <th>Valor</th>
+                                    <th>Status Inscrição</th>
+                                    <th>Pagamento</th>
+                                    <th>Comprovante</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="enrollments-table-body">
+                                <tr><td colspan="8" class="empty-state">Carregando inscrições...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            
+                <!-- Painel: Contribuições Espontâneas (PIX) -->
+                <div class="panel" style="margin-top: 24px;">
+                    <div class="panel-header">
+                        <div>
+                            <span class="panel-title">Contribuições Espontâneas (PIX)</span>
+                            <span class="panel-subtitle">Doações recebidas pelo site com comprovante anexado</span>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Doador / Nome</th>
+                                    <th>Valor Declarado</th>
+                                    <th>Data / Hora</th>
+                                    <th>Comprovante</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contributions-table-body">
+                                <tr><td colspan="5" class="empty-state">Carregando contribuições...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 5. USUÁRIOS & PERMISSÕES                     -->
+            <!-- ============================================ -->
+            <section id="usuarios" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Usuários & Perfis Administrativos</h2>
+                        <p class="section-desc">Controle de acesso granular (Super Admin, Coordenador, Mídia e novos perfis).</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn-outline" id="btn-add-role"><i class="ph ph-shield-plus"></i> Novo Perfil</button>
+                        <button class="btn-primary" id="btn-add-admin-user"><i class="ph ph-user-plus"></i> Novo Administrador</button>
+                    </div>
+                </div>
+
+                <!-- Tabela de Administradores -->
+                <div class="panel" style="margin-bottom: 24px;">
+                    <div class="panel-header">
+                        <span class="panel-title">Administradores Cadastrados</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Nome</th>
+                                    <th>E-mail</th>
+                                    <th>Perfil de Acesso</th>
+                                    <th>Status</th>
+                                    <th>Data Cadastro</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admins-table-body">
+                                <tr><td colspan="6" class="empty-state">Carregando usuários...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Matriz de Perfis do Sistema -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Perfis de Permissões (RBAC)</span>
+                        <span class="panel-subtitle">Permissões verificadas também no backend/API</span>
+                    </div>
+                    <div class="panel-body">
+                        <div id="roles-list-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+                            <div class="empty-state">Carregando perfis...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 7. CONFIGURAÇÕES GLOBAIS                     -->
+            <!-- ============================================ -->
+            <section id="config" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Configurações Globais</h2>
+                        <p class="section-desc">Chave Pix, dados de contribuição e informações institucionais refletidas no site.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-save-settings"><i class="ph ph-floppy-disk"></i> Salvar Configurações</button>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Dados de Contribuição & Chave PIX</span>
+                        <span class="panel-subtitle">Utilizados no modal de contribuição e taxas de inscrição do site</span>
+                    </div>
+                    <div class="panel-body form-layout">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cfg-pix-key">Chave PIX Oficial *</label>
+                                <input type="text" id="cfg-pix-key" class="text-input" placeholder="ex: projetojovenscomproposito@gmail.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="cfg-pix-type">Tipo de Chave *</label>
+                                <select id="cfg-pix-type" class="select-input" style="width: 100%;">
+                                    <option value="E-mail">E-mail</option>
+                                    <option value="CNPJ">CNPJ</option>
+                                    <option value="CPF">CPF</option>
+                                    <option value="Telefone">Telefone</option>
+                                    <option value="Chave Aleatória">Chave Aleatória (EVP)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cfg-pix-beneficiary">Nome do Favorecido *</label>
+                                <input type="text" id="cfg-pix-beneficiary" class="text-input" placeholder="Projeto Jovens com Propósito">
+                            </div>
+                            <div class="form-group">
+                                <label for="cfg-pix-bank">Instituição Bancária</label>
+                                <input type="text" id="cfg-pix-bank" class="text-input" placeholder="Banco do Brasil">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cfg-pix-city">Cidade / UF do Titular</label>
+                                <input type="text" id="cfg-pix-city" class="text-input" placeholder="Patos - PB">
+                            </div>
+                            <div class="form-group">
+                                <label for="cfg-contact-email">E-mail Institucional</label>
+                                <input type="email" id="cfg-contact-email" class="text-input" placeholder="projetojovenscomproposito@gmail.com">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-pix-notice">Mensagem Informativa de Contribuição</label>
+                            <textarea id="cfg-pix-notice" class="text-area" rows="3"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 6. AUDITORIA / LOGS GLOBAIS                 -->
+            <!-- ============================================ -->
+            <section id="logs" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Auditoria / Logs Globais</h2>
+                        <p class="section-desc">Histórico completo de login, alterações, uploads, inscrições e permissões.</p>
+                    </div>
+                    <button class="btn-outline" id="btn-export-logs"><i class="ph ph-file-arrow-down"></i> Exportar Logs</button>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="filter-row" style="flex-wrap: wrap;">
+                            <div class="search-bar small">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" placeholder="Buscar nos logs..." id="logs-search-input">
+                            </div>
+                            <select class="select-input" id="logs-action-filter">
+                                <option value="">Todas as Ações</option>
+                                <option value="LOGIN">Login / Logout</option>
+                                <option value="EDIÇÃO">Edições</option>
+                                <option value="AÇÃO">Ações Missionárias</option>
+                                <option value="INSCRIÇÃO">Inscrições</option>
+                                <option value="CADASTRO">Cadastros</option>
+                                <option value="CONFIG">Configurações</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Data / Hora</th>
+                                    <th>Usuário</th>
+                                    <th>Ação</th>
+                                    <th>Registro Afetado</th>
+                                    <th>IP</th>
+                                    <th>Detalhes</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logs-table-body">
+                                <tr><td colspan="6" class="empty-state">Carregando logs...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- CMS / CONTEÚDOS & NOTÍCIAS                   -->
+            <!-- ============================================ -->
+            <section id="conteudo" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Conteúdos & Textos (CMS)</h2>
+                        <p class="section-desc">Edite os textos principais exibidos no site público.</p>
+                    </div>
+                </div>
+                <div class="cms-grid">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-title">Seção: Hero (Início)</span>
+                        </div>
+                        <div class="panel-body form-layout">
+                            <div class="form-group">
+                                <label for="cms-hero-title">Título Principal</label>
+                                <input type="text" id="cms-hero-title" class="text-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="cms-hero-subtitle">Subtítulo</label>
+                                <textarea id="cms-hero-subtitle" class="text-area"></textarea>
+                            </div>
+                            <div class="form-actions right">
+                                <button class="btn-primary" id="btn-save-cms-hero">Salvar Hero</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <span class="panel-title">Seção: Sobre o Projeto</span>
+                        </div>
+                        <div class="panel-body form-layout">
+                            <div class="form-group">
+                                <label for="cms-about-text">Texto Descritivo</label>
+                                <textarea id="cms-about-text" class="text-area" style="height: 150px;"></textarea>
+                            </div>
+                            <div class="form-actions right">
+                                <button class="btn-primary" id="btn-save-cms-about">Salvar Sobre</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- FOTOS & VÍDEOS (MÍDIA)                       -->
+            <!-- ============================================ -->
+            <section id="midia" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Fotos & Vídeos (Mídia)</h2>
+                        <p class="section-desc">Galeria oficial de missões e cultos do Projeto JCP.</p>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-body">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;" id="media-gallery-grid">
+                            <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);"><img src="assets/images/noite_clamor.jpg" style="width: 100%; height: 140px; object-fit: cover;" alt="Vigília"><div style="padding: 10px; font-size: 12px; font-weight: 700;">Noite de Clamor</div></div>
+                            <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);"><img src="assets/images/comunhao_roda.jpg" style="width: 100%; height: 140px; object-fit: cover;" alt="Comunhão"><div style="padding: 10px; font-size: 12px; font-weight: 700;">Roda de Oração</div></div>
+                            <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);"><img src="assets/images/evangelismo_rua.jpg" style="width: 100%; height: 140px; object-fit: cover;" alt="Evangelismo"><div style="padding: 10px; font-size: 12px; font-weight: 700;">Evangelismo de Rua</div></div>
+                            <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);"><img src="assets/images/hero_worship.jpg" style="width: 100%; height: 140px; object-fit: cover;" alt="Louvor"><div style="padding: 10px; font-size: 12px; font-weight: 700;">Louvor e Adoração</div></div>
+                            <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);"><img src="assets/images/sertao_mission.jpg" style="width: 100%; height: 140px; object-fit: cover;" alt="Missão"><div style="padding: 10px; font-size: 12px; font-weight: 700;">Missão Sertaneja</div></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        
+            <!-- ============================================ -->
+            <!-- 11. GESTÃO DE LIDERANÇAS                    -->
+            <!-- ============================================ -->
+            <section id="lideres" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Nossas Lideranças</h2>
+                        <p class="section-desc">Gerencie as lideranças institucionais exibidas no site público do JCP.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-new-leader">
+                        <i class="ph ph-plus"></i> Novo Líder
+                    </button>
+                </div>
+
+                <!-- Barra de Filtros e Busca -->
+                <div class="panel mb-4">
+                    <div class="panel-body" style="padding: 16px 20px;">
+                        <div class="filter-bar" style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+                            <div class="search-bar" style="flex: 1; min-width: 240px; margin: 0;">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" placeholder="Buscar por nome ou departamento..." id="filter-leader-search">
+                            </div>
+                            <div style="min-width: 180px;">
+                                <select id="filter-leader-dept" class="select-input" style="width: 100%;">
+                                    <option value="">Todos os Departamentos</option>
+                                </select>
+                            </div>
+                            <div style="min-width: 160px;">
+                                <select id="filter-leader-status" class="select-input" style="width: 100%;">
+                                    <option value="">Todos os Status</option>
+                                    <option value="published">Publicados no Site</option>
+                                    <option value="draft">Rascunhos (Ocultos)</option>
+                                    <option value="active">Ativos</option>
+                                    <option value="inactive">Inativos</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabela de Líderes -->
+                <div class="panel">
+                    <div class="table-container">
+                        <table class="data-table" id="leaders-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 70px;">Foto</th>
+                                    <th>Nome & Cargo</th>
+                                    <th>Departamento</th>
+                                    <th style="width: 80px; text-align: center;">Ordem</th>
+                                    <th style="width: 110px;">Status</th>
+                                    <th style="width: 130px;">Visibilidade</th>
+                                    <th style="width: 160px; text-align: right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="leaders-table-body">
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                        Carregando líderes...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================ -->
+            <!-- 12. GESTÃO DE DEPARTAMENTOS                 -->
+            <!-- ============================================ -->
+            <section id="departamentos" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Departamentos & Ministérios</h2>
+                        <p class="section-desc">Estruture as áreas de atuação do JCP vinculadas aos líderes e voluntários.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-new-dept">
+                        <i class="ph ph-plus"></i> Novo Departamento
+                    </button>
+                </div>
+
+                <div class="panel">
+                    <div class="table-container">
+                        <table class="data-table" id="depts-table">
+                            <thead>
+                                <tr>
+                                    <th>Nome do Departamento</th>
+                                    <th>Descrição</th>
+                                    <th style="width: 140px; text-align: center;">Líderes Vinculados</th>
+                                    <th style="width: 110px;">Status</th>
+                                    <th style="width: 130px; text-align: right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="depts-table-body">
+                                <tr>
+                                    <td colspan="5" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                        Carregando departamentos...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </div><!-- /content-area -->
+    </main>
+</div>
+
+<!-- ==============================================================================
+     MODAIS DE CADASTRO E EDIÇÃO
+     ============================================================================== -->
+
+<!-- MODAL: CRIAR / EDITAR EDIÇÃO -->
+<div class="modal-overlay" id="modal-edition" style="display:none;">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3 id="modal-edition-title">Nova Edição</h3>
+            <button class="modal-close" id="modal-edition-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-edition-id">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-edition-name">Nome da Edição *</label>
+                    <input type="text" id="form-edition-name" class="text-input" placeholder="Ex: 14ª Edição — Despertar da Fé" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-edition-type">Tipo de Edição *</label>
+                    <select id="form-edition-type" class="select-input" style="width:100%;">
+                        <option value="Encontro">Encontro</option>
+                        <option value="Ação Evangelística">Ação Evangelística</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row" style="grid-template-columns: 2fr 1fr 1fr;">
+                <div class="form-group">
+                    <label for="form-edition-city">Cidade *</label>
+                    <input type="text" id="form-edition-city" class="text-input" placeholder="Ex: Pombal" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-edition-state">Estado (UF) *</label>
+                    <input type="text" id="form-edition-state" class="text-input" placeholder="PB" maxlength="2" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-edition-country">País</label>
+                    <input type="text" id="form-edition-country" class="text-input" value="Brasil">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-edition-date">Data / Período *</label>
+                    <input type="text" id="form-edition-date" class="text-input" placeholder="Ex: 10 a 12 de Outubro de 2026" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-edition-status">Status da Edição *</label>
+                    <select id="form-edition-status" class="select-input" style="width:100%;">
+                        <option value="Planejamento">Planejamento</option>
+                        <option value="Inscrições Abertas">Inscrições Abertas</option>
+                        <option value="Inscrições Encerradas">Inscrições Encerradas</option>
+                        <option value="Em Andamento">Em Andamento</option>
+                        <option value="Finalizada">Finalizada</option>
+                        <option value="Cancelada">Cancelada</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="form-edition-desc">Descrição Oficial</label>
+                <textarea id="form-edition-desc" class="text-area" rows="3" placeholder="Detalhes, propósitos e orientações da edição..."></textarea>
+            </div>
+
+            <!-- Upload da Imagem da Edição -->
+            <div class="form-group">
+                <label>Imagem de Capa da Edição (Upload)</label>
+                <div class="image-upload-box" id="edition-image-dropzone">
+                    <i class="ph ph-upload-simple"></i>
+                    <p style="font-size: 13px; font-weight: 600;">Clique para enviar imagem da edição</p>
+                    <span style="font-size: 11px; color: var(--text-light);">Formatos: JPG, PNG, WebP (Ideal: 1200×675px)</span>
+                    <input type="file" id="form-edition-file" accept="image/*" style="display:none;">
+                </div>
+                <input type="hidden" id="form-edition-image-val">
+                <img id="edition-image-preview" class="upload-thumb-preview" style="display:none;" alt="Prévia da Capa">
+            </div>
+
+            <!-- Configuração de Inscrição -->
+            <div style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 8px;">
+                <label style="font-size: 12px; font-weight: 800; text-transform: uppercase; color: var(--primary);">Configuração de Inscrição da Edição</label>
+                <div class="form-row" style="margin-top: 10px;">
+                    <div class="form-group">
+                        <label for="form-edition-regtype">Modelo de Inscrição *</label>
+                        <select id="form-edition-regtype" class="select-input" style="width:100%;">
+                            <option value="none">Sem Inscrição (Aberto / Livre)</option>
+                            <option value="free">Inscrição Gratuita</option>
+                            <option value="paid">Inscrição com Taxa</option>
+                            <option value="shirt">Inscrição com Camisa Obrigatória</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="group-edition-price" style="display:none;">
+                        <label for="form-edition-price" id="label-edition-price">Valor (R$)</label>
+                        <input type="number" step="0.50" min="0" id="form-edition-price" class="text-input" placeholder="0.00">
+                    </div>
+                </div>
+
+                <!-- Configuração de Tamanhos de Camisa -->
+                <div class="form-group" id="group-edition-shirts" style="display:none; margin-top: 12px;">
+                    <label>Tamanhos de Camisa Disponíveis (Marque os permitidos)</label>
+                    <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px;">
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="PP"> PP</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="P" checked> P</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="M" checked> M</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="G" checked> G</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="GG" checked> GG</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="shirt_size" value="XGG" checked> XGG</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-edition">Cancelar</button>
+            <button class="btn-primary" id="btn-save-edition"><i class="ph ph-floppy-disk"></i> Salvar Edição</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: CRIAR / EDITAR AÇÃO MISSIONÁRIA -->
+<div class="modal-overlay" id="modal-action" style="display:none;">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modal-action-title">Nova Ação Missionária</h3>
+            <button class="modal-close" id="modal-action-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-action-id">
+            <div class="form-group">
+                <label for="form-action-edition">Edição Vinculada *</label>
+                <select id="form-action-edition" class="select-input" style="width:100%;" required></select>
+            </div>
+            <div class="form-group">
+                <label for="form-action-title">Título da Ação *</label>
+                <input type="text" id="form-action-title" class="text-input" placeholder="Ex: Vigília nas Ruas, Sopão Solidário..." required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-action-date">Data</label>
+                    <input type="date" id="form-action-date" class="text-input">
+                </div>
+                <div class="form-group">
+                    <label for="form-action-time">Horário</label>
+                    <input type="time" id="form-action-time" class="text-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-action-location">Local Específico</label>
+                    <input type="text" id="form-action-location" class="text-input" placeholder="Ex: Praça Central, Tenda 1...">
+                </div>
+                <div class="form-group">
+                    <label for="form-action-leader">Líder / Responsável</label>
+                    <input type="text" id="form-action-leader" class="text-input" placeholder="Nome do coordenador">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="form-action-status">Status</label>
+                <select id="form-action-status" class="select-input" style="width:100%;">
+                    <option value="Planejada">Planejada</option>
+                    <option value="Confirmada">Confirmada</option>
+                    <option value="Concluída">Concluída</option>
+                    <option value="Cancelada">Cancelada</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="form-action-desc">Descrição / Metas</label>
+                <textarea id="form-action-desc" class="text-area" rows="3"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-action">Cancelar</button>
+            <button class="btn-primary" id="btn-save-action"><i class="ph ph-floppy-disk"></i> Salvar Ação</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: CRIAR / EDITAR VOLUNTÁRIO / PARTICIPANTE -->
+<div class="modal-overlay" id="modal-volunteer" style="display:none;">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3 id="modal-volunteer-title">Cadastro de Voluntário / Participante</h3>
+            <button class="modal-close" id="modal-volunteer-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-vol-id">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-vol-name">Nome Completo *</label>
+                    <input type="text" id="form-vol-name" class="text-input" placeholder="Nome completo" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-vol-birth">Data de Nascimento *</label>
+                    <input type="date" id="form-vol-birth" class="text-input" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-vol-phone">Telefone (ID Único / WhatsApp) *</label>
+                    <input type="tel" id="form-vol-phone" class="text-input" placeholder="(83) 99999-9999" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-vol-email">E-mail *</label>
+                    <input type="email" id="form-vol-email" class="text-input" placeholder="email@exemplo.com" required>
+                </div>
+            </div>
+            <div class="form-row" style="grid-template-columns: 2fr 1fr;">
+                <div class="form-group">
+                    <label for="form-vol-street">Rua e Número</label>
+                    <input type="text" id="form-vol-street" class="text-input" placeholder="Rua, Av, Número...">
+                </div>
+                <div class="form-group">
+                    <label for="form-vol-neighborhood">Bairro</label>
+                    <input type="text" id="form-vol-neighborhood" class="text-input" placeholder="Bairro">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-vol-city">Cidade</label>
+                    <input type="text" id="form-vol-city" class="text-input" placeholder="Cidade">
+                </div>
+                <div class="form-group">
+                    <label for="form-vol-state">Estado (UF)</label>
+                    <input type="text" id="form-vol-state" class="text-input" placeholder="PB" maxlength="2">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-vol-pastor">Pastor Responsável</label>
+                    <input type="text" id="form-vol-pastor" class="text-input" placeholder="Nome do Pastor">
+                </div>
+                <div class="form-group">
+                    <label for="form-vol-church">Igreja</label>
+                    <input type="text" id="form-vol-church" class="text-input" placeholder="Nome da Igreja">
+                </div>
+            </div>
+
+            <!-- Pergunta: Servir como Voluntário? -->
+            <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 8px;">
+                <div class="form-group">
+                    <label for="form-vol-isvolunteer" style="font-size: 13px; font-weight: 800; color: var(--primary);">Servir como voluntário? *</label>
+                    <select id="form-vol-isvolunteer" class="select-input" style="width: 100%;">
+                        <option value="true">SIM — Desejo atuar nas missões e encontros</option>
+                        <option value="false">NÃO — Apenas participante / membro</option>
+                    </select>
+                </div>
+
+                <!-- Seleção de Áreas -->
+                <div id="box-volunteer-areas" style="margin-top: 12px; background: #F8FAFC; padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <label style="font-weight: 700; font-size: 12px; margin-bottom: 8px; display: block;">Selecione as Áreas de Atuação:</label>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;">
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Pregação"> Pregação</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Músico"> Músico</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Cantor"> Cantor</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Apoio"> Apoio</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Logístico"> Logístico</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Fiscal"> Fiscal</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Mídia"> Mídia</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Serviço Social"> Serviço Social</label>
+                        <label class="permission-checkbox-label"><input type="checkbox" name="vol_area" value="Outros"> Outros</label>
+                    </div>
+                    <div class="form-group" id="group-vol-other" style="display:none; margin-top: 10px;">
+                        <label for="form-vol-other-detail">Especifique a outra área:</label>
+                        <input type="text" id="form-vol-other-detail" class="text-input" placeholder="Ex: Fotografia profissional, socorrista...">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-volunteer">Cancelar</button>
+            <button class="btn-primary" id="btn-save-volunteer"><i class="ph ph-floppy-disk"></i> Salvar Cadastro</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: VISUALIZAR COMPROVANTE & VALIDAR INSCRIÇÃO -->
+<div class="modal-overlay" id="modal-proof" style="display:none;">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Comprovante de Pagamento</h3>
+            <button class="modal-close" id="modal-proof-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="proof-enrollment-id">
+            <div class="proof-preview-wrapper" id="proof-image-container">
+                <div class="empty-state">Sem comprovante anexado.</div>
+            </div>
+            <div class="proof-meta-grid">
+                <div>
+                    <span class="proof-meta-label">Participante</span>
+                    <div class="proof-meta-val" id="proof-val-name">—</div>
+                </div>
+                <div>
+                    <span class="proof-meta-label">Edição</span>
+                    <div class="proof-meta-val" id="proof-val-edition">—</div>
+                </div>
+                <div>
+                    <span class="proof-meta-label">Tipo / Camisa</span>
+                    <div class="proof-meta-val" id="proof-val-details">—</div>
+                </div>
+                <div>
+                    <span class="proof-meta-label">Valor Declarado</span>
+                    <div class="proof-meta-val" id="proof-val-amount" style="color:var(--primary); font-weight:800;">—</div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="proof-admin-notes">Observações da Tesouraria / Validação</label>
+                <input type="text" id="proof-admin-notes" class="text-input" placeholder="Ex: PIX conferido no extrato bancário">
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content: space-between;">
+            <button class="btn-outline danger" id="btn-reject-enrollment"><i class="ph ph-x-circle"></i> Recusar / Rejeitar</button>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-outline" id="btn-close-proof">Fechar</button>
+                <button class="btn-primary" id="btn-approve-enrollment" style="background:#10B981;"><i class="ph ph-check-circle"></i> Aprovar Inscrição</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: NOVO ADMINISTRADOR -->
+<div class="modal-overlay" id="modal-admin-user" style="display:none;">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modal-admin-title">Novo Administrador</h3>
+            <button class="modal-close" id="modal-admin-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-adm-id">
+            <div class="form-group">
+                <label for="form-adm-name">Nome Completo *</label>
+                <input type="text" id="form-adm-name" class="text-input" placeholder="Nome do administrador" required>
+            </div>
+            <div class="form-group">
+                <label for="form-adm-email">E-mail de Acesso *</label>
+                <input type="email" id="form-adm-email" class="text-input" placeholder="usuario@jcp.org" required>
+            </div>
+            <div class="form-group">
+                <label for="form-adm-password">Senha de Acesso *</label>
+                <input type="password" id="form-adm-password" class="text-input" placeholder="Mínimo 6 caracteres">
+                <small style="color: var(--text-light); font-size: 11px;">Deixe em branco se não desejar alterar a senha</small>
+            </div>
+            <div class="form-group">
+                <label for="form-adm-role">Perfil de Permissões *</label>
+                <select id="form-adm-role" class="select-input" style="width: 100%;" required>
+                    <option value="super_admin">Super Admin (Acesso Total)</option>
+                    <option value="coordenador">Coordenador (Edições, Inscrições e Voluntários)</option>
+                    <option value="midia">Mídia (Fotos, Vídeos, CMS e Edições)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="form-adm-status">Status</label>
+                <select id="form-adm-status" class="select-input" style="width: 100%;">
+                    <option value="Ativo">Ativo</option>
+                    <option value="Inativo">Inativo</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-adm">Cancelar</button>
+            <button class="btn-primary" id="btn-save-adm"><i class="ph ph-floppy-disk"></i> Salvar Administrador</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: NOVO PERFIL DE ACESSO (RBAC) -->
+<div class="modal-overlay" id="modal-role" style="display:none;">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Novo Perfil de Acesso</h3>
+            <button class="modal-close" id="modal-role-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <div class="form-group">
+                <label for="form-role-name">Nome do Perfil *</label>
+                <input type="text" id="form-role-name" class="text-input" placeholder="Ex: Tesouraria, Pastor Supervisor..." required>
+            </div>
+            <div class="form-group">
+                <label for="form-role-desc">Descrição</label>
+                <textarea id="form-role-desc" class="text-area" rows="2" placeholder="Descreva as atribuições deste perfil..."></textarea>
+            </div>
+            <div class="form-group">
+                <label>Permissões do Perfil:</label>
+                <div class="permission-matrix">
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="dashboard:read" checked> Dashboard</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="editions:read"> Ver Edições</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="editions:write"> Criar/Editar Edições</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="actions:read"> Ver Ações</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="actions:write"> Gerenciar Ações</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="volunteers:read"> Ver Voluntários</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="volunteers:write"> Editar Voluntários</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="enrollments:read"> Ver Inscrições</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="enrollments:write"> Aprovar Inscrições</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="media:write"> Gerenciar Mídia</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="content:write"> Editar Textos (CMS)</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="logs:read"> Ver Auditoria / Logs</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="settings:write"> Configurações Globais</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="users:manage"> Gerenciar Usuários</label>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-role">Cancelar</button>
+            <button class="btn-primary" id="btn-save-role"><i class="ph ph-shield-check"></i> Criar Perfil</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- ==============================================================================
+     MODAIS DE LÍDERES E DEPARTAMENTOS
+     ============================================================================== -->
+
+<!-- MODAL: CRIAR / EDITAR LÍDER -->
+<div class="modal-overlay" id="modal-leader" style="display:none;">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3 id="modal-leader-title">Novo Líder</h3>
+            <button class="modal-close" id="modal-leader-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-leader-id">
+
+            <!-- Upload da Foto com Preview Transparente -->
+            <div class="form-group">
+                <label>Foto do Líder (Fundo Transparente PNG) *</label>
+                <div class="leader-upload-container">
+                    <div class="leader-photo-preview-box" id="leader-photo-preview-box">
+                        <div class="leader-photo-checkerboard" id="leader-photo-checker">
+                            <span class="preview-empty-text" id="leader-photo-empty-text">Sem foto</span>
+                            <img id="leader-photo-img" src="" alt="Preview da Foto" style="display:none;" class="leader-preview-img">
+                        </div>
+                    </div>
+                    <div class="leader-upload-controls">
+                        <input type="file" id="form-leader-photo-file" accept="image/png,image/webp,image/jpeg" style="display:none;">
+                        <button type="button" class="btn-outline btn-sm" id="btn-browse-leader-photo">
+                            <i class="ph ph-upload-simple"></i> Selecionar Foto / Imagem
+                        </button>
+                        <button type="button" class="btn-ghost btn-sm text-danger" id="btn-remove-leader-photo" style="display:none;">
+                            <i class="ph ph-trash"></i> Remover Foto
+                        </button>
+                        <p class="form-hint" style="margin-top: 8px;">
+                            <strong>Dica:</strong> Imagens em PNG (fundo transparente), JPG ou WebP de até 10MB são otimizadas automaticamente e salvas sem limites de espaço.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-leader-name">Nome Completo *</label>
+                    <input type="text" id="form-leader-name" class="text-input" placeholder="Ex: João Silva" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-leader-dept">Departamento *</label>
+                    <select id="form-leader-dept" class="select-input" style="width:100%;" required>
+                        <option value="">Selecione um departamento...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-leader-role">Cargo / Atuação Específica (Opcional)</label>
+                    <input type="text" id="form-leader-role" class="text-input" placeholder="Ex: Coordenador de Ações, Ministro de Louvor...">
+                </div>
+                <div class="form-group">
+                    <label for="form-leader-instagram">Instagram (Opcional)</label>
+                    <input type="text" id="form-leader-instagram" class="text-input" placeholder="Ex: @joaosilva">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                    <label for="form-leader-bio">Apresentação Pessoal / Descrição da Atuação *</label>
+                    <span id="form-leader-bio-counter" style="font-size: 0.75rem; color: var(--text-muted);">0 / 400</span>
+                </div>
+                <textarea id="form-leader-bio" class="text-area" rows="4" maxlength="400"
+                    placeholder="Escreva 2 a 4 frases curtas e acolhedoras sobre como serve no JCP e seu propósito no ministério..." required></textarea>
+                <p class="form-hint">Dica: Um texto curto, acolhedor e focado no chamado cristão e serviço à igreja e sociedade.</p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-leader-order">Ordem de Exibição no Site</label>
+                    <input type="number" id="form-leader-order" class="text-input" value="1" min="1" max="999">
+                    <p class="form-hint">Menor número aparece primeiro no site (ex: 1, 2, 3...).</p>
+                </div>
+                <div class="form-group" style="display: flex; flex-direction: column; justify-content: center; gap: 10px; padding-top: 18px;">
+                    <label class="permission-checkbox-label" style="margin: 0;">
+                        <input type="checkbox" id="form-leader-published" checked>
+                        <strong>Publicar no Site Público</strong> (visível para todos os visitantes)
+                    </label>
+                    <label class="permission-checkbox-label" style="margin: 0;">
+                        <input type="checkbox" id="form-leader-active" checked>
+                        <strong>Líder Ativo</strong> (em atividade no JCP)
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-leader">Cancelar</button>
+            <button class="btn-primary" id="btn-save-leader"><i class="ph ph-check"></i> Salvar Líder</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: CRIAR / EDITAR DEPARTAMENTO -->
+<div class="modal-overlay" id="modal-dept" style="display:none;">
+    <div class="modal modal-md">
+        <div class="modal-header">
+            <h3 id="modal-dept-title">Novo Departamento</h3>
+            <button class="modal-close" id="modal-dept-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-dept-id">
+            <div class="form-group">
+                <label for="form-dept-name">Nome do Departamento *</label>
+                <input type="text" id="form-dept-name" class="text-input" placeholder="Ex: Evangelismo, Intercessão, Louvor..." required>
+            </div>
+            <div class="form-group">
+                <label for="form-dept-desc">Descrição / Atribuições</label>
+                <textarea id="form-dept-desc" class="text-area" rows="3" placeholder="Descreva as funções e atividades deste departamento no JCP..."></textarea>
+            </div>
+            <div class="form-group">
+                <label class="permission-checkbox-label" style="margin: 0;">
+                    <input type="checkbox" id="form-dept-active" checked>
+                    <strong>Departamento Ativo</strong>
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-dept">Cancelar</button>
+            <button class="btn-primary" id="btn-save-dept"><i class="ph ph-check"></i> Salvar Departamento</button>
+        </div>
+    </div>
+</div>
+
+<!-- SCRIPTS -->
+<script src="js/db.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
+
