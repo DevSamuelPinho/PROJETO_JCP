@@ -1,0 +1,16 @@
+# Backups e dados locais
+*.json
+*.sql
+
+# Scripts de infraestrutura e migração local
+populate_direct.js
+
+# Extensões e ferramentas de desenvolvimento
+.kombai/
+.vscode/
+.idea/
+
+# Arquivos temporários e logs
+*.log
+.DS_Store
+Thumbs.db
