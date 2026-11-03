@@ -3,20 +3,22 @@
  * PROJETO JOVENS COM PROPÓSITO — JCP | BANCO DE DADOS & CAMADA DE BACKEND
  * ==============================================================================
  * Sistema relacional completo com controle de acesso (RBAC), auditoria global,
- * validação de permissões no backend/API e persistência em localStorage.
+ * validação de permissões no backend/API e persistência remota no Supabase.
  * ==============================================================================
  */
 
 const JCP_DB_KEY = 'jcp_system_db_v4'; // v4 = reset limpo (out/2026)
 const JCP_SESSION_KEY = 'jcp_admin_session_v4';
 const JCP_PARTICIPANT_SESSION_KEY = 'jcp_participant_session_v4';
-const JCP_PENDING_PARTICIPANT_SIGNUP_KEY = 'jcp_participant_pending_signup_v1';
+const JCP_MEDIA_BUCKET = 'jcp-media';
 
 class DatabaseService {
     constructor() {
         this.supabase = this._createSupabaseClient();
         this.participantAuth = this._createParticipantAuthClient();
         this._currentAdmin = null;
+        this._currentParticipant = null;
+        this._pendingParticipantSignup = null;
         this._lastAdminAuthIssue = null;
         this._lastAdminAuthEmail = null;
         this._init();
@@ -24,7 +26,12 @@ class DatabaseService {
 
     _createSupabaseClient() {
         const config = window.JCP_SUPABASE_CONFIG;
-        if (!config?.url || !config?.publishableKey || !window.supabase?.createClient) return null;
+        if (!config?.url || !config?.publishableKey) {
+            throw new Error('Configuração do Supabase ausente. O sistema não pode iniciar sem o banco remoto.');
+        }
+        if (!window.supabase?.createClient) {
+            throw new Error('Cliente Supabase indisponível. Verifique se o SDK foi carregado antes do sistema.');
+        }
         const isAdminPage = /(?:^|\/)admin\.html$/i.test(window.location.pathname);
         return window.supabase.createClient(config.url, config.publishableKey, {
             auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: isAdminPage }
@@ -53,6 +60,7 @@ class DatabaseService {
        INICIALIZAÇÃO & SEEDS DO BANCO DE DADOS
        ========================================================================== */
     _init() {
+        if (this._hasRemoteDataSource()) return;
         if (!localStorage.getItem(JCP_DB_KEY)) {
             const seed = {
                 // 1. PERFIS E PERMISSÕES (RBAC)
@@ -80,19 +88,23 @@ class DatabaseService {
                             'enrollments:write',
                             'contributions:read',
                             'leaders:read',
-                            'leaders:write'
+                            'leaders:write',
+                            'testimonials:read',
+                            'testimonials:write'
                         ],
                         isSystem: true
                     },
                     {
                         id: 'midia',
                         name: 'Mídia',
-                        description: 'Acesso exclusivo a fotos, vídeos, conteúdos editoriais (CMS) e consulta de edições.',
+                        description: 'Acesso exclusivo a fotos, vídeos, testemunhos, conteúdos editoriais (CMS) e consulta de edições.',
                         permissions: [
                             'dashboard:read',
                             'editions:read',
                             'media:read',
                             'media:write',
+                            'testimonials:read',
+                            'testimonials:write',
                             'content:read',
                             'content:write'
                         ],
@@ -485,11 +497,20 @@ class DatabaseService {
             existing.editions = existing.editions.filter(e => e.id !== 'ed_3');
         }
 
-        // --- Permissões do coordenador ---
+        // --- Permissões do coordenador e mídia ---
         if (existing.roles) {
             const coordRole = existing.roles.find(r => r.id === 'coordenador');
             if (coordRole && !coordRole.permissions.includes('leaders:read')) {
                 coordRole.permissions.push('leaders:read', 'leaders:write');
+                needsSave = true;
+            }
+            if (coordRole && !coordRole.permissions.includes('testimonials:read')) {
+                coordRole.permissions.push('testimonials:read', 'testimonials:write');
+                needsSave = true;
+            }
+            const midiaRole = existing.roles.find(r => r.id === 'midia');
+            if (midiaRole && !midiaRole.permissions.includes('testimonials:read')) {
+                midiaRole.permissions.push('testimonials:read', 'testimonials:write');
                 needsSave = true;
             }
         }
@@ -507,6 +528,11 @@ class DatabaseService {
                 { id: 'media_seed_4', title: 'Louvor e Adoração', src: 'assets/images/hero_worship.jpg', alt: 'Momento de louvor', createdAt: '2026-09-04T00:00:00.000Z' },
                 { id: 'media_seed_5', title: 'Missão Sertaneja', src: 'assets/images/sertao_mission.jpg', alt: 'Equipe em missão no sertão', createdAt: '2026-09-05T00:00:00.000Z' }
             ];
+            needsSave = true;
+        }
+
+        if (!Array.isArray(existing.testimonials)) {
+            existing.testimonials = [];
             needsSave = true;
         }
 
@@ -530,21 +556,17 @@ class DatabaseService {
     }
 
     _read() {
-        try {
-            return JSON.parse(localStorage.getItem(JCP_DB_KEY)) || {};
-        } catch (e) {
-            console.error('Erro ao ler DB:', e);
-            return {};
-        }
+        if (this._hasRemoteDataSource()) return {};
+        throw new Error('Supabase não está configurado. A leitura local de dados foi desativada.');
     }
 
     _hasRemoteDataSource() {
         return Boolean(this.supabase && window.JCP_SUPABASE_CONFIG?.url);
     }
 
-    async _selectRemoteRows(table) {
-        if (!this._hasRemoteDataSource()) return null;
-        const { data, error } = await this.supabase.from(table).select('*');
+    async _selectRemoteRows(table, client = this.supabase) {
+        if (!this._hasRemoteDataSource() || !client) throw new Error('Supabase não está configurado. Os dados não foram carregados.');
+        const { data, error } = await client.from(table).select('*');
         if (error) {
             const message = error.code === '42501'
                 ? 'Acesso negado pelas políticas RLS.'
@@ -642,21 +664,8 @@ class DatabaseService {
     }
 
     _save(data) {
-        try {
-            localStorage.setItem(JCP_DB_KEY, JSON.stringify(data));
-        } catch (e) {
-            console.warn('Falha ao salvar no localStorage (possivel limite de quota):', e);
-            if (data.logs && data.logs.length > 20) {
-                data.logs = data.logs.slice(0, 20);
-                try {
-                    localStorage.setItem(JCP_DB_KEY, JSON.stringify(data));
-                    return;
-                } catch (e2) {
-                    console.error('Segunda tentativa de salvar falhou:', e2);
-                }
-            }
-            throw new Error('Limite de armazenamento do navegador atingido. A imagem enviada ou os dados excederam o espaco local.');
-        }
+        if (this._hasRemoteDataSource()) return;
+        throw new Error('Supabase não está configurado. A gravação local de dados foi desativada.');
     }
 
     /* ==========================================================================
@@ -712,8 +721,13 @@ class DatabaseService {
     }
 
     async getAdminRole(roleId) {
-        const db = this._read();
-        return db.roles.find(r => r.id === roleId) || null;
+        const { data, error } = await this.supabase
+            .from('jcp_admin_roles')
+            .select('id, name, description, permissions')
+            .eq('id', roleId)
+            .maybeSingle();
+        if (error) throw new Error(`Não foi possível carregar o perfil de acesso no Supabase: ${error.message}`);
+        return data ? { ...data, isSystem: ['super_admin', 'coordenador', 'midia'].includes(data.id) } : null;
     }
 
     async hasPermission(permission) {
@@ -721,7 +735,14 @@ class DatabaseService {
         const { data, error } = await this.supabase.rpc('jcp_has_permission', {
             requested_permission: permission
         });
-        return !error && data === true;
+        if (!error && data === true) return true;
+        if (permission === 'testimonials:read') {
+            return (await this.hasPermission('media:read')) || (await this.hasPermission('leaders:read'));
+        }
+        if (permission === 'testimonials:write') {
+            return (await this.hasPermission('media:write')) || (await this.hasPermission('leaders:write'));
+        }
+        return false;
     }
 
     async _requirePermission(permission) {
@@ -780,13 +801,18 @@ class DatabaseService {
         return data.user;
     }
 
-    async createParticipantAccount(email, password) {
+    async createParticipantAccount(email, password, participantData) {
         if (!this.participantAuth) throw new Error('Autenticacao indisponivel: configure o Supabase.');
-        const redirectTo = `${window.location.origin}${window.location.pathname}`;
+        const siteUrl = window.JCP_SUPABASE_CONFIG?.siteUrl;
+        if (!siteUrl) throw new Error('URL pública do site não configurada para confirmação de cadastro.');
+        const redirectTo = new URL('index.html', `${siteUrl.replace(/\/+$/, '')}/`).href;
         const { data, error } = await this.participantAuth.auth.signUp({
             email,
             password,
-            options: { emailRedirectTo: redirectTo }
+            options: {
+                emailRedirectTo: redirectTo,
+                data: { jcp_participant_profile: participantData }
+            }
         });
         if (error) {
             if (error.name === 'AuthRetryableFetchError' || !error.status) {
@@ -815,7 +841,9 @@ class DatabaseService {
 
     async requestParticipantPasswordReset(email) {
         if (!this.participantAuth) throw new Error('Autenticacao indisponivel: configure o Supabase.');
-        const redirectTo = `${window.location.origin}${window.location.pathname}?participantRecovery=1`;
+        const siteUrl = window.JCP_SUPABASE_CONFIG?.siteUrl;
+        if (!siteUrl) throw new Error('URL pública do site não configurada para recuperação de senha.');
+        const redirectTo = new URL('index.html?participantRecovery=1', `${siteUrl.replace(/\/+$/, '')}/`).href;
         const { error } = await this.participantAuth.auth.resetPasswordForEmail(email, { redirectTo });
         if (error) {
             if (error.status === 429) throw new Error('Limite de solicitações atingido. Aguarde e tente novamente.');
@@ -832,45 +860,35 @@ class DatabaseService {
 
     setPendingParticipantSignup(participant) {
         if (!participant?.email) throw new Error('Cadastro pendente sem e-mail.');
-        localStorage.setItem(JCP_PENDING_PARTICIPANT_SIGNUP_KEY, JSON.stringify({
-            participant,
-            expiresAt: Date.now() + 24 * 60 * 60 * 1000
-        }));
+        this._pendingParticipantSignup = participant;
     }
 
     getPendingParticipantSignup() {
-        const raw = localStorage.getItem(JCP_PENDING_PARTICIPANT_SIGNUP_KEY);
-        if (!raw) return null;
-        try {
-            const saved = JSON.parse(raw);
-            if (!saved?.participant || saved.expiresAt < Date.now()) {
-                localStorage.removeItem(JCP_PENDING_PARTICIPANT_SIGNUP_KEY);
-                return null;
-            }
-            return saved.participant;
-        } catch {
-            localStorage.removeItem(JCP_PENDING_PARTICIPANT_SIGNUP_KEY);
-            return null;
-        }
+        return this._pendingParticipantSignup;
     }
 
     async completePendingParticipantSignup() {
-        const participantData = this.getPendingParticipantSignup();
-        if (!participantData) return null;
         if (!this.participantAuth) throw new Error('Autenticacao indisponivel: configure o Supabase.');
-        const { data, error } = await this.participantAuth.auth.getSession();
-        const authEmail = data?.session?.user?.email;
+        const { data, error } = await this.participantAuth.auth.getUser();
+        const user = data?.user;
+        const authEmail = user?.email;
         if (error || !authEmail) return null;
+        const participantData = this.getPendingParticipantSignup() || user.user_metadata?.jcp_participant_profile;
+        if (!participantData) {
+            const existing = await this.getParticipantByEmail(authEmail);
+            if (existing) this.setCurrentParticipant(existing);
+            return existing;
+        }
         if (this._normalizeParticipantEmail(authEmail) !== this._normalizeParticipantEmail(participantData.email)) {
             throw new Error('O e-mail autenticado nao corresponde ao cadastro pendente.');
         }
 
-        const existingByPhone = await this.getParticipantByPhone(participantData.phone);
-        if (existingByPhone && this._normalizeParticipantEmail(existingByPhone.email) !== this._normalizeParticipantEmail(authEmail)) {
-            throw new Error('Este telefone ja esta vinculado a outro e-mail. Fale com a coordenacao para atualizar o cadastro.');
-        }
         const participant = await this.registerParticipant(participantData);
-        localStorage.removeItem(JCP_PENDING_PARTICIPANT_SIGNUP_KEY);
+        this._pendingParticipantSignup = null;
+        const { error: metadataError } = await this.participantAuth.auth.updateUser({
+            data: { jcp_participant_profile: null }
+        });
+        if (metadataError) console.error('Não foi possível limpar os metadados temporários do cadastro:', metadataError.message);
         return participant;
     }
 
@@ -880,28 +898,31 @@ class DatabaseService {
     }
 
     async restoreParticipantSession() {
-        const participant = this.getCurrentParticipant();
         if (!this.participantAuth) {
             this.setCurrentParticipant(null);
             return null;
         }
 
-        const { data, error } = await this.participantAuth.auth.getSession();
-        const authEmail = data?.session?.user?.email;
+        const { data, error } = await this.participantAuth.auth.getUser();
+        const authEmail = data?.user?.email;
+        if (error || !authEmail) {
+            this.setCurrentParticipant(null);
+            return null;
+        }
+        const participant = await this.completePendingParticipantSignup();
         if (!participant) {
-            const pending = this.getPendingParticipantSignup();
             const isPasswordRecovery = new URLSearchParams(window.location.search).get('participantRecovery') === '1';
-            const isPendingSignup = pending && this._normalizeParticipantEmail(authEmail) === this._normalizeParticipantEmail(pending.email);
-            if (authEmail && !isPasswordRecovery && !isPendingSignup) {
+            if (!isPasswordRecovery) {
                 await this.participantAuth.auth.signOut();
             }
             return null;
         }
-        if (error || !authEmail || this._normalizeParticipantEmail(authEmail) !== this._normalizeParticipantEmail(participant.email)) {
+        if (this._normalizeParticipantEmail(authEmail) !== this._normalizeParticipantEmail(participant.email)) {
             this.setCurrentParticipant(null);
-            if (authEmail) await this.participantAuth.auth.signOut();
+            await this.participantAuth.auth.signOut();
             return null;
         }
+        this.setCurrentParticipant(participant);
         return participant;
     }
 
@@ -909,7 +930,6 @@ class DatabaseService {
        AUDITORIA & LOGS GLOBAIS
        ========================================================================== */
     async addAuditLog(action, affectedRecord, details = '') {
-        const db = this._read();
         const currentAdmin = await this.getCurrentAdmin();
         const currentParticipant = this.getCurrentParticipant();
 
@@ -938,27 +958,40 @@ class DatabaseService {
             userRole,
             action,
             affectedRecord: affectedRecord || 'Sistema',
-            ip: '127.0.0.1',
             details: typeof details === 'object' ? JSON.stringify(details) : String(details)
         };
 
-        db.logs = db.logs || [];
-        db.logs.unshift(logItem);
-
-        // Limita a 500 logs para evitar estouro de memória
-        if (db.logs.length > 500) {
-            db.logs = db.logs.slice(0, 500);
+        if (currentAdmin || currentParticipant) {
+            const client = currentAdmin ? this.supabase : this.participantAuth;
+            const { error } = await client.from('jcp_audit_logs').insert({
+                id: logItem.id,
+                actor_id: userId,
+                actor_name: userName,
+                actor_role: userRole,
+                action: logItem.action,
+                affected_record: logItem.affectedRecord,
+                details: logItem.details,
+                created_at: logItem.timestamp
+            });
+            if (error) throw new Error(`Não foi possível registrar a auditoria no Supabase: ${error.message}`);
         }
-
-        this._save(db);
         return logItem;
     }
 
     async getLogs(filter = {}) {
         await this._delay();
         await this._requirePermission('logs:read');
-        const db = this._read();
-        let logs = db.logs || [];
+        const rows = await this._selectRemoteRows('jcp_audit_logs');
+        let logs = rows.map(row => ({
+            id: row.id,
+            userId: row.actor_id || '',
+            userName: row.actor_name || '',
+            userRole: row.actor_role || '',
+            action: row.action || '',
+            affectedRecord: row.affected_record || '',
+            details: row.details || '',
+            timestamp: row.created_at || ''
+        }));
 
         if (filter.action) {
             logs = logs.filter(l => l.action.toLowerCase().includes(filter.action.toLowerCase()));
@@ -981,9 +1014,7 @@ class DatabaseService {
     async getEditions(filter = {}) {
         await this._delay();
         const remoteRows = await this._selectRemoteRows('editions');
-        let editions = remoteRows === null
-            ? (this._read().editions || [])
-            : remoteRows.map(row => this._mapRemoteEdition(row));
+        let editions = remoteRows.map(row => this._mapRemoteEdition(row));
 
         if (filter.status) {
             editions = editions.filter(e => e.status === filter.status);
@@ -1031,6 +1062,28 @@ class DatabaseService {
             updatedAt: new Date().toISOString()
         };
 
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('editions').insert({
+                id: newEdition.id,
+                name: newEdition.name,
+                type: newEdition.type,
+                city: newEdition.city,
+                state: newEdition.state,
+                country: newEdition.country,
+                date: newEdition.date,
+                description: newEdition.description,
+                image: newEdition.image,
+                status: newEdition.status,
+                registration_type: newEdition.registrationType,
+                price: newEdition.price,
+                shirt_price: newEdition.shirtPrice,
+                shirt_sizes: newEdition.shirtSizes,
+                created_at: newEdition.createdAt,
+                updated_at: newEdition.updatedAt
+            });
+            if (error) throw new Error(`Não foi possível salvar a edição no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
         db.editions = db.editions || [];
         db.editions.unshift(newEdition);
         this._save(db);
@@ -1044,9 +1097,9 @@ class DatabaseService {
         await this._requirePermission('editions:write');
         const db = this._read();
         const idx = (db.editions || []).findIndex(e => e.id === id);
-        if (idx === -1) throw new Error('Edição não encontrada.');
+        const old = idx !== -1 ? db.editions[idx] : await this.getEditionById(id);
+        if (!old) throw new Error('Edição não encontrada.');
 
-        const old = db.editions[idx];
         const updated = {
             ...old,
             ...patch,
@@ -1059,7 +1112,34 @@ class DatabaseService {
             updated.shirtSizes = patch.shirtSizes ? patch.shirtSizes.split(',').map(s => s.trim()) : [];
         }
 
-        db.editions[idx] = updated;
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('editions').upsert({
+                id: updated.id,
+                name: updated.name,
+                type: updated.type,
+                city: updated.city,
+                state: updated.state,
+                country: updated.country || 'Brasil',
+                date: updated.date,
+                description: updated.description || '',
+                image: updated.image || 'assets/images/noite_clamor.jpg',
+                status: updated.status,
+                registration_type: updated.registrationType || 'free',
+                price: Number(updated.price) || 0,
+                shirt_price: Number(updated.shirtPrice) || 0,
+                shirt_sizes: Array.isArray(updated.shirtSizes) ? updated.shirtSizes : [],
+                created_at: updated.createdAt || new Date().toISOString(),
+                updated_at: updated.updatedAt
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar a edição no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.editions = db.editions || [];
+        if (idx !== -1) {
+            db.editions[idx] = updated;
+        } else {
+            db.editions.unshift(updated);
+        }
         this._save(db);
 
         await this.addAuditLog('EDIÇÃO_ATUALIZADA', updated.name, `Campos modificados: ${Object.keys(patch).join(', ')}`);
@@ -1069,18 +1149,15 @@ class DatabaseService {
     async deleteEdition(id) {
         await this._delay();
         await this._requirePermission('editions:write');
-        const db = this._read();
-        const target = (db.editions || []).find(e => e.id === id);
+        const target = await this.getEditionById(id);
         if (!target) throw new Error('Edição não encontrada.');
 
-        // Remove ações vinculadas
-        db.actions = (db.actions || []).filter(a => a.editionId !== id);
-        // Remove inscrições vinculadas
-        db.enrollments = (db.enrollments || []).filter(en => en.editionId !== id);
-        // Remove edição
-        db.editions = db.editions.filter(e => e.id !== id);
-
-        this._save(db);
+        const { error: actionError } = await this.supabase.from('actions').delete().eq('edition_id', id);
+        if (actionError) throw new Error(`Não foi possível excluir as ações vinculadas no Supabase: ${actionError.message}`);
+        const { error: enrollmentError } = await this.supabase.from('enrollments').delete().eq('edition_id', id);
+        if (enrollmentError) throw new Error(`Não foi possível excluir as inscrições vinculadas no Supabase: ${enrollmentError.message}`);
+        const { error } = await this.supabase.from('editions').delete().eq('id', id);
+        if (error) throw new Error(`Não foi possível excluir a edição no Supabase: ${error.message || 'Erro de permissão/banco'}`);
         await this.addAuditLog('EDIÇÃO_EXCLUÍDA', target.name, `Edição e todas as suas ações e inscrições foram excluídas`);
         return true;
     }
@@ -1096,20 +1173,18 @@ class DatabaseService {
     async getActions(editionId = null) {
         await this._delay();
         const remoteRows = await this._selectRemoteRows('actions');
-        let actions = remoteRows === null
-            ? (this._read().actions || [])
-            : remoteRows.map(row => ({
-                id: row.id,
-                editionId: row.edition_id || '',
-                title: row.title || '',
-                date: row.date || '',
-                time: row.time || '',
-                location: row.location || '',
-                leader: row.leader || '',
-                description: row.description || '',
-                status: row.status || '',
-                createdAt: row.created_at || ''
-            }));
+        let actions = remoteRows.map(row => ({
+            id: row.id,
+            editionId: row.edition_id || '',
+            title: row.title || '',
+            date: row.date || '',
+            time: row.time || '',
+            location: row.location || '',
+            leader: row.leader || '',
+            description: row.description || '',
+            status: row.status || '',
+            createdAt: row.created_at || ''
+        }));
         if (editionId) {
             actions = actions.filter(a => a.editionId === editionId);
         }
@@ -1121,7 +1196,7 @@ class DatabaseService {
         await this._requirePermission('actions:write');
         const db = this._read();
 
-        const edition = (db.editions || []).find(e => e.id === actionData.editionId);
+        const edition = (db.editions || []).find(e => e.id === actionData.editionId) || await this.getEditionById(actionData.editionId);
         if (!edition) throw new Error('A edição vinculada não existe.');
 
         const newAction = {
@@ -1137,6 +1212,22 @@ class DatabaseService {
             createdAt: new Date().toISOString()
         };
 
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('actions').insert({
+                id: newAction.id,
+                edition_id: newAction.editionId,
+                title: newAction.title,
+                date: newAction.date,
+                time: newAction.time,
+                location: newAction.location,
+                leader: newAction.leader,
+                description: newAction.description,
+                status: newAction.status,
+                created_at: newAction.createdAt
+            });
+            if (error) throw new Error(`Não foi possível salvar a ação no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
         db.actions = db.actions || [];
         db.actions.push(newAction);
         this._save(db);
@@ -1150,10 +1241,37 @@ class DatabaseService {
         await this._requirePermission('actions:write');
         const db = this._read();
         const idx = (db.actions || []).findIndex(a => a.id === id);
-        if (idx === -1) throw new Error('Ação não encontrada.');
+        let existing = idx !== -1 ? db.actions[idx] : null;
+        if (!existing) {
+            const allActions = await this.getActions();
+            existing = allActions.find(a => a.id === id) || null;
+        }
+        if (!existing) throw new Error('Ação não encontrada.');
 
-        const updated = { ...db.actions[idx], ...patch };
-        db.actions[idx] = updated;
+        const updated = { ...existing, ...patch };
+
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('actions').upsert({
+                id: updated.id,
+                edition_id: updated.editionId,
+                title: updated.title,
+                date: updated.date || '',
+                time: updated.time || '',
+                location: updated.location || '',
+                leader: updated.leader || '',
+                description: updated.description || '',
+                status: updated.status || 'Planejada',
+                created_at: updated.createdAt || new Date().toISOString()
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar a ação no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.actions = db.actions || [];
+        if (idx !== -1) {
+            db.actions[idx] = updated;
+        } else {
+            db.actions.push(updated);
+        }
         this._save(db);
 
         await this.addAuditLog('AÇÃO_ATUALIZADA', updated.title, `Ação missionária atualizada`);
@@ -1164,10 +1282,19 @@ class DatabaseService {
         await this._delay();
         await this._requirePermission('actions:write');
         const db = this._read();
-        const action = (db.actions || []).find(a => a.id === id);
+        let action = (db.actions || []).find(a => a.id === id);
+        if (!action) {
+            const allActions = await this.getActions();
+            action = allActions.find(a => a.id === id);
+        }
         if (!action) return false;
 
-        db.actions = db.actions.filter(a => a.id !== id);
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('actions').delete().eq('id', id);
+            if (error) throw new Error(`Não foi possível excluir a ação no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.actions = (db.actions || []).filter(a => a.id !== id);
         this._save(db);
 
         await this.addAuditLog('AÇÃO_EXCLUÍDA', action.title, `Ação missionária removida da edição`);
@@ -1178,31 +1305,34 @@ class DatabaseService {
        3. PARTICIPANTES & VOLUNTÁRIOS
        ========================================================================== */
     getCurrentParticipant() {
-        const raw = sessionStorage.getItem(JCP_PARTICIPANT_SESSION_KEY) || localStorage.getItem(JCP_PARTICIPANT_SESSION_KEY);
-        if (!raw) return null;
-        try { return JSON.parse(raw); } catch { return null; }
+        return this._currentParticipant;
     }
 
     setCurrentParticipant(participant) {
-        if (!participant) {
-            sessionStorage.removeItem(JCP_PARTICIPANT_SESSION_KEY);
-            localStorage.removeItem(JCP_PARTICIPANT_SESSION_KEY);
-        } else {
-            const data = JSON.stringify(participant);
-            sessionStorage.setItem(JCP_PARTICIPANT_SESSION_KEY, data);
-            localStorage.setItem(JCP_PARTICIPANT_SESSION_KEY, data);
-        }
+        this._currentParticipant = participant || null;
+        sessionStorage.removeItem(JCP_PARTICIPANT_SESSION_KEY);
+        localStorage.removeItem(JCP_PARTICIPANT_SESSION_KEY);
     }
 
     async getParticipants(filter = {}) {
         await this._delay();
-        let participants;
-        if (this._hasRemoteDataSource() && await this.getCurrentAdmin()) {
+        const admin = await this.getCurrentAdmin();
+        let client = this.supabase;
+        let participantEmail = '';
+        if (admin) {
             await this._requirePermission('volunteers:read');
-            participants = (await this._selectRemoteRows('participants') || []).map(row => this._mapRemoteParticipant(row));
         } else {
-            participants = this._read().participants || [];
+            const { data: authData, error: authError } = await this.participantAuth.auth.getUser();
+            const email = authData?.user?.email;
+            if (authError || !email) return [];
+            client = this.participantAuth;
+            participantEmail = email;
         }
+        let query = client.from('participants').select('*');
+        if (participantEmail) query = query.eq('email', participantEmail);
+        const { data, error } = await query;
+        if (error) throw new Error(`Não foi possível carregar participantes do Supabase: ${error.message}`);
+        let participants = (data || []).map(row => this._mapRemoteParticipant(row));
 
         if (filter.isVolunteer !== undefined) {
             participants = participants.filter(p => p.isVolunteer === filter.isVolunteer);
@@ -1250,66 +1380,59 @@ class DatabaseService {
 
     async registerParticipant(data) {
         await this._delay();
-        const db = this._read();
-        db.participants = db.participants || [];
-
         const cleanPhone = (data.phone || '').trim();
         const cleanEmail = (data.email || '').trim().toLowerCase();
-
-        // Evitar duplicidade pelo Telefone (ID único do participante)
-        let existing = db.participants.find(p => this._normalizeBrazilPhone(p.phone) === this._normalizeBrazilPhone(cleanPhone));
-        if (existing && this._normalizeParticipantEmail(existing.email) !== this._normalizeParticipantEmail(cleanEmail)) {
-            throw new Error('Este telefone ja esta vinculado a outro e-mail. Fale com a coordenacao para atualizar o cadastro.');
+        if (!this.participantAuth) throw new Error('Autenticação de participante não está configurada.');
+        const { data: authData, error: authError } = await this.participantAuth.auth.getUser();
+        if (authError || this._normalizeParticipantEmail(authData?.user?.email) !== cleanEmail) {
+            throw new Error('Entre com a conta do participante antes de salvar o cadastro.');
         }
-
-        const emailOwner = db.participants.find(p =>
-            this._normalizeParticipantEmail(p.email) === this._normalizeParticipantEmail(cleanEmail) &&
-            this._normalizeBrazilPhone(p.phone) !== this._normalizeBrazilPhone(cleanPhone)
-        );
-        if (emailOwner) throw new Error('Este e-mail ja esta vinculado a outro cadastro.');
-
-        if (existing) {
-            // Atualiza dados cadastrais
-            existing.name = data.name.trim();
-            existing.birthDate = data.birthDate || existing.birthDate;
-            existing.email = cleanEmail || existing.email;
-            existing.address = data.address || existing.address;
-            existing.pastor = data.pastor || existing.pastor;
-            existing.church = data.church || existing.church;
-            if (data.isVolunteer !== undefined) existing.isVolunteer = data.isVolunteer;
-            if (data.volunteerAreas) existing.volunteerAreas = data.volunteerAreas;
-            if (data.volunteerOtherDetails !== undefined) existing.volunteerOtherDetails = data.volunteerOtherDetails;
-            existing.updatedAt = new Date().toISOString();
-
-            this._save(db);
-            this.setCurrentParticipant(existing);
-            await this.addAuditLog('CADASTRO_ATUALIZADO', existing.name, `Participante atualizou informações cadastrais`);
-            return existing;
-        }
-
-        const newPart = {
-            id: 'part_' + Date.now(),
+        const existing = await this.getParticipantByEmail(cleanEmail);
+        const targetParticipant = {
+            ...(existing || {}),
+            id: existing?.id || `part_${authData.user.id}`,
             name: data.name.trim(),
-            birthDate: data.birthDate || '',
-            phone: cleanPhone,
+            birthDate: data.birthDate || existing?.birthDate || '',
+            phone: cleanPhone || existing?.phone || '',
             email: cleanEmail,
-            address: data.address || { street: '', number: '', neighborhood: '', city: '', state: '' },
-            pastor: data.pastor ? data.pastor.trim() : '',
-            church: data.church ? data.church.trim() : '',
-            isVolunteer: Boolean(data.isVolunteer),
-            volunteerAreas: Array.isArray(data.volunteerAreas) ? data.volunteerAreas : [],
-            volunteerOtherDetails: data.volunteerOtherDetails ? data.volunteerOtherDetails.trim() : '',
-            status: 'Ativo',
-            createdAt: new Date().toISOString()
+            address: data.address || existing?.address || { street: '', number: '', neighborhood: '', city: '', state: '' },
+            pastor: data.pastor || existing?.pastor || '',
+            church: data.church || existing?.church || '',
+            isVolunteer: data.isVolunteer !== undefined ? Boolean(data.isVolunteer) : Boolean(existing?.isVolunteer),
+            volunteerAreas: data.volunteerAreas || existing?.volunteerAreas || [],
+            volunteerOtherDetails: data.volunteerOtherDetails !== undefined ? data.volunteerOtherDetails : (existing?.volunteerOtherDetails || ''),
+            status: existing?.status || 'Ativo',
+            createdAt: existing?.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
         };
 
-        db.participants.unshift(newPart);
-        this._save(db);
-        this.setCurrentParticipant(newPart);
+        const addr = targetParticipant.address || {};
+        const { data: saved, error } = await this.participantAuth.from('participants').upsert({
+            id: targetParticipant.id,
+            name: targetParticipant.name,
+            birth_date: targetParticipant.birthDate || null,
+            phone: targetParticipant.phone,
+            email: targetParticipant.email,
+            city: addr.city || '',
+            state: addr.state || '',
+            street: addr.street || '',
+            neighborhood: addr.neighborhood || '',
+            pastor: targetParticipant.pastor || '',
+            church: targetParticipant.church || '',
+            is_volunteer: Boolean(targetParticipant.isVolunteer),
+            volunteer_areas: Array.isArray(targetParticipant.volunteerAreas) ? targetParticipant.volunteerAreas : [],
+            volunteer_other_details: targetParticipant.volunteerOtherDetails || '',
+            status: targetParticipant.status,
+            created_at: targetParticipant.createdAt,
+            updated_at: targetParticipant.updatedAt
+        }, { onConflict: 'id' }).select('*').single();
+        if (error) throw new Error(`Não foi possível salvar o cadastro no Supabase: ${error.message}`);
+        const participant = this._mapRemoteParticipant(saved);
+        this.setCurrentParticipant(participant);
 
-        const logAction = newPart.isVolunteer ? 'CADASTRO_VOLUNTÁRIO' : 'CADASTRO_PARTICIPANTE';
-        await this.addAuditLog(logAction, newPart.name, `Novo cadastro realizado (Telefone: ${newPart.phone}, Voluntário: ${newPart.isVolunteer ? 'SIM' : 'NÃO'})`);
-        return newPart;
+        const logAction = existing ? 'CADASTRO_ATUALIZADO' : (participant.isVolunteer ? 'CADASTRO_VOLUNTÁRIO' : 'CADASTRO_PARTICIPANTE');
+        await this.addAuditLog(logAction, participant.name, 'Cadastro de participante salvo no Supabase.');
+        return participant;
     }
 
     async updateParticipant(id, patch) {
@@ -1317,10 +1440,45 @@ class DatabaseService {
         await this._requirePermission('volunteers:write');
         const db = this._read();
         const idx = (db.participants || []).findIndex(p => p.id === id);
-        if (idx === -1) throw new Error('Participante não encontrado.');
+        let existing = idx !== -1 ? db.participants[idx] : null;
+        if (!existing) {
+            const allParts = await this.getParticipants();
+            existing = allParts.find(p => p.id === id) || null;
+        }
+        if (!existing) throw new Error('Participante não encontrado.');
 
-        const updated = { ...db.participants[idx], ...patch, updatedAt: new Date().toISOString() };
-        db.participants[idx] = updated;
+        const updated = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+
+        if (this._hasRemoteDataSource()) {
+            const addr = updated.address || {};
+            const { error } = await this.supabase.from('participants').upsert({
+                id: updated.id,
+                name: updated.name,
+                birth_date: updated.birthDate || null,
+                phone: updated.phone || '',
+                email: updated.email || '',
+                city: addr.city || '',
+                state: addr.state || '',
+                street: addr.street || '',
+                neighborhood: addr.neighborhood || '',
+                pastor: updated.pastor || '',
+                church: updated.church || '',
+                is_volunteer: Boolean(updated.isVolunteer),
+                volunteer_areas: Array.isArray(updated.volunteerAreas) ? updated.volunteerAreas : [],
+                volunteer_other_details: updated.volunteerOtherDetails || '',
+                status: updated.status || 'Ativo',
+                created_at: updated.createdAt || new Date().toISOString(),
+                updated_at: updated.updatedAt
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar o participante no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.participants = db.participants || [];
+        if (idx !== -1) {
+            db.participants[idx] = updated;
+        } else {
+            db.participants.unshift(updated);
+        }
         this._save(db);
 
         await this.addAuditLog('PARTICIPANTE_ATUALIZADO', updated.name, `Registro de participante/voluntário alterado`);
@@ -1330,15 +1488,13 @@ class DatabaseService {
     async deleteParticipant(id) {
         await this._delay();
         await this._requirePermission('volunteers:write');
-        const db = this._read();
-        const part = (db.participants || []).find(p => p.id === id);
+        const part = (await this.getParticipants()).find(p => p.id === id);
         if (!part) return false;
 
-        db.participants = db.participants.filter(p => p.id !== id);
-        // Exclui inscrições vinculadas
-        db.enrollments = (db.enrollments || []).filter(en => en.participantId !== id);
-
-        this._save(db);
+        const { error: enrollmentError } = await this.supabase.from('enrollments').delete().eq('participant_id', id);
+        if (enrollmentError) throw new Error(`Não foi possível excluir as inscrições vinculadas no Supabase: ${enrollmentError.message}`);
+        const { error } = await this.supabase.from('participants').delete().eq('id', id);
+        if (error) throw new Error(`Não foi possível excluir o participante no Supabase: ${error.message || 'Erro de permissão/banco'}`);
         await this.addAuditLog('PARTICIPANTE_EXCLUÍDO', part.name, `Participante e suas inscrições foram removidos`);
         return true;
     }
@@ -1379,70 +1535,54 @@ class DatabaseService {
         await this._delay();
         const isAdmin = this._hasRemoteDataSource() && await this.getCurrentAdmin();
         if (isAdmin) await this._requirePermission('enrollments:read');
-        const remoteRows = isAdmin ? await this._selectRemoteRows('enrollments') : null;
-        if (remoteRows !== null) {
-            const editions = await this.getEditions();
-            let enrollments = remoteRows.map(row => {
-                const participant = row.participant_name || row.participant_phone || row.participant_email
-                    ? { id: row.participant_id || '', name: row.participant_name || '', phone: row.participant_phone || '', email: row.participant_email || '' }
-                    : null;
-                const edition = editions.find(item => item.id === row.edition_id)
-                    || (row.edition_name ? { id: row.edition_id || '', name: row.edition_name } : null);
-                return this._mapRemoteEnrollment(row, participant, edition);
-            });
-            if (filter.editionId) enrollments = enrollments.filter(item => item.editionId === filter.editionId);
-            if (filter.participantId) enrollments = enrollments.filter(item => item.participantId === filter.participantId);
-            if (filter.status) enrollments = enrollments.filter(item => item.status === filter.status);
-            if (filter.paymentStatus) enrollments = enrollments.filter(item => item.paymentStatus === filter.paymentStatus);
-            return enrollments;
+        if (!isAdmin) {
+            const { data: authData, error: authError } = await this.participantAuth.auth.getUser();
+            if (authError || !authData?.user?.email) return [];
         }
-
-        const db = this._read();
-        let enrollments = db.enrollments || [];
-
-        if (filter.editionId) {
-            enrollments = enrollments.filter(e => e.editionId === filter.editionId);
-        }
-        if (filter.participantId) {
-            enrollments = enrollments.filter(e => e.participantId === filter.participantId);
-        }
-        if (filter.status) {
-            enrollments = enrollments.filter(e => e.status === filter.status);
-        }
-        if (filter.paymentStatus) {
-            enrollments = enrollments.filter(e => e.paymentStatus === filter.paymentStatus);
-        }
-
-        // Popula relacionamentos com Participante e Edição
-        return enrollments.map(en => {
-            const participant = (db.participants || []).find(p => p.id === en.participantId) || null;
-            const edition = (db.editions || []).find(e => e.id === en.editionId) || null;
-            return {
-                ...en,
-                participant,
-                edition
-            };
+        const remoteRows = await this._selectRemoteRows(
+            'enrollments',
+            isAdmin ? this.supabase : this.participantAuth
+        );
+        const editions = await this.getEditions();
+        let enrollments = remoteRows.map(row => {
+            const participant = row.participant_name || row.participant_phone || row.participant_email
+                ? { id: row.participant_id || '', name: row.participant_name || '', phone: row.participant_phone || '', email: row.participant_email || '' }
+                : null;
+            const edition = editions.find(item => item.id === row.edition_id)
+                || (row.edition_name ? { id: row.edition_id || '', name: row.edition_name } : null);
+            return this._mapRemoteEnrollment(row, participant, edition);
         });
+        if (filter.editionId) enrollments = enrollments.filter(item => item.editionId === filter.editionId);
+        if (filter.participantId) enrollments = enrollments.filter(item => item.participantId === filter.participantId);
+        if (filter.status) enrollments = enrollments.filter(item => item.status === filter.status);
+        if (filter.paymentStatus) enrollments = enrollments.filter(item => item.paymentStatus === filter.paymentStatus);
+        return enrollments;
     }
 
     async createEnrollment(data) {
         await this._delay();
-        const db = this._read();
 
-        const edition = (db.editions || []).find(e => e.id === data.editionId);
+        const edition = await this.getEditionById(data.editionId);
         if (!edition) throw new Error('Edição selecionada não foi encontrada.');
 
         let participant = null;
         if (data.participantId) {
-            participant = (db.participants || []).find(p => p.id === data.participantId);
+            participant = this.getCurrentParticipant();
+            if (!participant || participant.id !== data.participantId) {
+                participant = await this.getParticipantByEmail((await this.participantAuth.auth.getUser()).data?.user?.email);
+            }
         } else if (data.participantData) {
             participant = await this.registerParticipant(data.participantData);
         }
 
         if (!participant) throw new Error('Dados do participante inválidos.');
+        const { data: authData, error: authError } = await this.participantAuth.auth.getUser();
+        if (authError || this._normalizeParticipantEmail(authData?.user?.email) !== this._normalizeParticipantEmail(participant.email)) {
+            throw new Error('Entre com a conta do participante antes de realizar a inscrição.');
+        }
 
-        // Verifica se já está inscrito nesta edição
-        const existing = (db.enrollments || []).find(en => en.editionId === edition.id && en.participantId === participant.id && en.status !== 'Cancelada');
+        const existing = (await this.getEnrollments({ editionId: edition.id, participantId: participant.id }))
+            .find(en => en.status !== 'Cancelada');
         if (existing) {
             throw new Error(`O participante ${participant.name} já possui uma inscrição ativa nesta edição.`);
         }
@@ -1483,9 +1623,26 @@ class DatabaseService {
             updatedAt: new Date().toISOString()
         };
 
-        db.enrollments = db.enrollments || [];
-        db.enrollments.unshift(newEnrollment);
-        this._save(db);
+        const { error } = await this.participantAuth.from('enrollments').insert({
+            id: newEnrollment.id,
+            edition_id: edition.id,
+            edition_name: edition.name,
+            participant_id: participant.id,
+            participant_name: participant.name,
+            participant_phone: participant.phone,
+            participant_email: participant.email,
+            registration_type: newEnrollment.registrationType,
+            shirt_size: newEnrollment.shirtSize,
+            amount_paid: newEnrollment.amount,
+            status: newEnrollment.status,
+            payment_status: newEnrollment.paymentStatus,
+            proof_url: newEnrollment.proofFile,
+            proof_file_name: newEnrollment.proofFileName,
+            admin_notes: '',
+            created_at: newEnrollment.createdAt,
+            updated_at: newEnrollment.updatedAt
+        });
+        if (error) throw new Error(`Não foi possível salvar a inscrição no Supabase: ${error.message}`);
 
         await this.addAuditLog(
             'INSCRIÇÃO_REALIZADA',
@@ -1505,19 +1662,38 @@ class DatabaseService {
         await this._requirePermission('enrollments:write');
         const db = this._read();
         const idx = (db.enrollments || []).findIndex(e => e.id === id);
-        if (idx === -1) throw new Error('Inscrição não encontrada.');
+        let en = idx !== -1 ? db.enrollments[idx] : null;
+        if (!en) {
+            const allEn = await this.getEnrollments();
+            en = allEn.find(e => e.id === id) || null;
+        }
+        if (!en) throw new Error('Inscrição não encontrada.');
 
-        const en = db.enrollments[idx];
         en.status = newStatus || en.status;
         if (paymentStatus) en.paymentStatus = paymentStatus;
         if (adminNotes) en.adminNotes = adminNotes;
         en.updatedAt = new Date().toISOString();
 
-        db.enrollments[idx] = en;
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('enrollments').update({
+                status: en.status,
+                payment_status: en.paymentStatus,
+                admin_notes: en.adminNotes || '',
+                updated_at: en.updatedAt
+            }).eq('id', id);
+            if (error) throw new Error(`Não foi possível atualizar a inscrição no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.enrollments = db.enrollments || [];
+        if (idx !== -1) {
+            db.enrollments[idx] = en;
+        } else {
+            db.enrollments.unshift(en);
+        }
         this._save(db);
 
-        const participant = (db.participants || []).find(p => p.id === en.participantId);
-        const pName = participant ? participant.name : 'Participante';
+        const participant = (db.participants || []).find(p => p.id === en.participantId) || en.participant;
+        const pName = participant ? participant.name : (en.participantName || 'Participante');
 
         await this.addAuditLog(
             'INSCRIÇÃO_ATUALIZADA',
@@ -1532,10 +1708,19 @@ class DatabaseService {
         await this._delay();
         await this._requirePermission('enrollments:write');
         const db = this._read();
-        const en = (db.enrollments || []).find(e => e.id === id);
+        let en = (db.enrollments || []).find(e => e.id === id);
+        if (!en) {
+            const allEn = await this.getEnrollments();
+            en = allEn.find(e => e.id === id);
+        }
         if (!en) return false;
 
-        db.enrollments = db.enrollments.filter(e => e.id !== id);
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('enrollments').delete().eq('id', id);
+            if (error) throw new Error(`Não foi possível excluir a inscrição no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
+
+        db.enrollments = (db.enrollments || []).filter(e => e.id !== id);
         this._save(db);
 
         await this.addAuditLog('INSCRIÇÃO_EXCLUÍDA', `Inscrição #${id}`, `Inscrição cancelada e excluída pelo administrador`);
@@ -1567,12 +1752,14 @@ class DatabaseService {
     async addAdmin(data) {
         await this._delay();
         await this._requirePermission('users:manage');
+        const siteUrl = window.JCP_SUPABASE_CONFIG?.siteUrl;
+        if (!siteUrl) throw new Error('URL pública do site não configurada para envio de convites.');
         const result = await this._invokeAdminManagement('invite', {
             name: data.name,
             email: data.email,
             roleId: data.roleId,
             status: data.status || 'Ativo',
-            redirectTo: new URL('./admin.html', window.location.href).href
+            redirectTo: new URL('admin.html', `${siteUrl.replace(/\/+$/, '')}/`).href
         });
         await this.addAuditLog('ADMIN_CONVIDADO', result.admin?.name || data.name, `Convite administrativo enviado com perfil: ${data.roleId}`);
         return { ...result.admin, invited: result.invited === true };
@@ -1637,49 +1824,59 @@ class DatabaseService {
     async getSettings() {
         await this._delay();
         const remoteRows = await this._selectRemoteRows('settings');
-        if (remoteRows !== null) {
-            const row = remoteRows[0];
-            if (!row) return {};
-            return {
-                id: row.id,
-                pixKey: row.pix_key || '',
-                pixKeyType: row.pix_key_type || '',
-                pixBeneficiary: row.pix_beneficiary || '',
-                pixBank: row.pix_bank || '',
-                pixCity: row.pix_city || '',
-                pixNotice: row.pix_notice || '',
-                contactEmail: row.contact_email || '',
-                contactPhone: row.contact_phone || '',
-                instagram: row.instagram || '',
-                updatedAt: row.updated_at || ''
-            };
-        }
-        const db = this._read();
-        return db.settings || {
-            pixKey: 'projetojovenscomproposito@gmail.com',
-            pixKeyType: 'E-mail',
-            pixBeneficiary: 'Projeto Jovens com Propósito',
-            pixBank: 'Banco do Brasil',
-            pixCity: 'Patos - PB',
-            pixNotice: 'Sua contribuição sustenta a realização dos encontros e viagens missionárias pelo sertão.'
+        const row = remoteRows[0];
+        if (!row) return {};
+        return {
+            id: row.id,
+            pixKey: row.pix_key || '',
+            pixKeyType: row.pix_key_type || '',
+            pixBeneficiary: row.pix_beneficiary || '',
+            pixBank: row.pix_bank || '',
+            pixCity: row.pix_city || '',
+            pixNotice: row.pix_notice || '',
+            contactEmail: row.contact_email || '',
+            contactPhone: row.contact_phone || '',
+            instagram: row.instagram || '',
+            updatedAt: row.updated_at || ''
         };
     }
 
     async updateSettings(patch) {
         await this._delay();
         await this._requirePermission('settings:write');
-        const db = this._read();
+        const currentRemote = await this.getSettings();
 
-        const oldSettings = db.settings || {};
-        db.settings = { ...oldSettings, ...patch };
-        this._save(db);
+        const oldSettings = currentRemote || {};
+        const updatedSettings = {
+            ...oldSettings,
+            ...patch,
+            id: oldSettings.id || 'global_settings',
+            updatedAt: new Date().toISOString()
+        };
+
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('settings').upsert({
+                id: updatedSettings.id,
+                pix_key: updatedSettings.pixKey || '',
+                pix_key_type: updatedSettings.pixKeyType || 'E-mail',
+                pix_beneficiary: updatedSettings.pixBeneficiary || '',
+                pix_bank: updatedSettings.pixBank || '',
+                pix_city: updatedSettings.pixCity || '',
+                pix_notice: updatedSettings.pixNotice || '',
+                contact_email: updatedSettings.contactEmail || '',
+                contact_phone: updatedSettings.contactPhone || '',
+                instagram: updatedSettings.instagram || '',
+                updated_at: updatedSettings.updatedAt
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar as configurações no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
 
         await this.addAuditLog(
             'CONFIG_ATUALIZADA',
             'Configurações Globais',
             `Configurações do sistema atualizadas: ${Object.keys(patch).join(', ')}`
         );
-        return db.settings;
+        return updatedSettings;
     }
 
     /* ==========================================================================
@@ -1692,8 +1889,7 @@ class DatabaseService {
             const remoteRows = await this._selectRemoteRows('contributions');
             return (remoteRows || []).map(row => this._mapRemoteContribution(row));
         }
-        const db = this._read();
-        return db.contributions || [];
+        return [];
     }
 
     async addContribution(contrib) {
@@ -1713,9 +1909,20 @@ class DatabaseService {
             status: 'Confirmado'
         };
 
-        db.contributions = db.contributions || [];
-        db.contributions.unshift(newContrib);
-        this._save(db);
+        const { error } = await this.supabase.from('contributions').insert({
+            id: newContrib.id,
+            donor_name: newContrib.donorName,
+            donor_email: newContrib.email,
+            donor_phone: newContrib.phone,
+            amount: newContrib.amount,
+            payment_method: newContrib.paymentMethod,
+            proof_url: newContrib.proofFile,
+            proof_file_name: newContrib.proofFileName,
+            intent: newContrib.notes,
+            status: newContrib.status,
+            created_at: newContrib.date
+        });
+        if (error) throw new Error(`Não foi possível registrar a contribuição no Supabase: ${error.message}`);
 
         await this.addAuditLog('CONTRIBUIÇÃO_RECEBIDA', `R$ ${newContrib.amount.toFixed(2)} (${newContrib.donorName})`, `Contribuição voluntária via PIX registrada`);
         return newContrib;
@@ -1726,58 +1933,78 @@ class DatabaseService {
        ========================================================================== */
     async getContent() {
         await this._delay();
-        if (this._hasRemoteDataSource()) {
-            const { data: { user } = {} } = await this.supabase.auth.getUser();
-            if (!user) return {};
-            await this._requirePermission('content:read');
-            const rows = await this._selectRemoteRows('cms_content');
-            if (rows === null || !rows.length) return {};
-            const content = {};
-            for (const row of rows) {
-                const key = row.content_key || row.key || row.slug || row.section;
-                const value = row.content_value ?? row.value ?? row.content ?? row.text;
-                if (key && value !== undefined) content[key] = value;
-            }
-            const first = rows[0];
-            content.heroTitle = first.hero_title ?? first.heroTitle ?? content.hero_title ?? content.heroTitle ?? '';
-            content.heroSubtitle = first.hero_subtitle ?? first.heroSubtitle ?? content.hero_subtitle ?? content.heroSubtitle ?? '';
-            content.aboutText = first.about_text ?? first.aboutText ?? content.about_text ?? content.aboutText ?? '';
-            return content;
+        const rows = await this._selectRemoteRows('cms_content');
+        const content = {};
+        for (const row of rows) {
+            const key = row.content_key || row.key || row.slug || row.section;
+            const value = row.content_value ?? row.value ?? row.content ?? row.text;
+            if (key && value !== undefined) content[key] = value;
         }
-        const db = this._read();
-        return db.content || {};
+        const first = rows[0] || {};
+        if (first.hero_title ?? first.heroTitle ?? content.hero_title ?? content.heroTitle) {
+            content.heroTitle = first.hero_title ?? first.heroTitle ?? content.hero_title ?? content.heroTitle;
+        }
+        if (first.hero_subtitle ?? first.heroSubtitle ?? content.hero_subtitle ?? content.heroSubtitle) {
+            content.heroSubtitle = first.hero_subtitle ?? first.heroSubtitle ?? content.hero_subtitle ?? content.heroSubtitle;
+        }
+        if (first.about_text ?? first.aboutText ?? content.about_text ?? content.aboutText) {
+            content.aboutText = first.about_text ?? first.aboutText ?? content.about_text ?? content.aboutText;
+        }
+        return content;
     }
 
     async updateContent(patch) {
         await this._delay();
         await this._requirePermission('content:write');
-        const db = this._read();
-        db.content = { ...db.content, ...patch };
-        this._save(db);
+        const currentContent = await this.getContent();
+        const nextContent = { ...currentContent, ...patch };
+        const keyMap = {
+            heroTitle: 'hero_title',
+            heroSubtitle: 'hero_subtitle',
+            aboutText: 'about_text'
+        };
+        for (const [jsKey, val] of Object.entries(patch)) {
+            const snakeKey = keyMap[jsKey] || jsKey;
+            const { error } = await this.supabase.from('cms_content').upsert({
+                id: snakeKey,
+                key: snakeKey,
+                value: String(val ?? ''),
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível salvar conteúdo no Supabase: ${error.message}`);
+        }
 
         await this.addAuditLog('CONTEÚDO_CMS_ATUALIZADO', 'Textos do Site', `Alteração de conteúdo da landing page`);
-        return db.content;
+        return nextContent;
     }
 
     async getMessages() {
         await this._delay();
-        const db = this._read();
-        return db.messages || [];
+        await this._requirePermission('logs:read');
+        const rows = await this._selectRemoteRows('jcp_messages');
+        return rows.map(row => ({
+            id: row.id,
+            name: row.name || '',
+            email: row.email || '',
+            subject: row.subject || '',
+            message: row.message || '',
+            read: Boolean(row.read),
+            createdAt: row.created_at || ''
+        }));
     }
 
     async markMessageAsRead(id) {
         await this._delay();
-        const db = this._read();
-        const msg = (db.messages || []).find(m => m.id === id);
-        if (msg) msg.read = true;
-        this._save(db);
+        await this._requirePermission('logs:read');
+        const { error } = await this.supabase.from('jcp_messages').update({ read: true }).eq('id', id);
+        if (error) throw new Error(`Não foi possível atualizar a mensagem no Supabase: ${error.message}`);
     }
 
     async deleteMessage(id) {
         await this._delay();
-        const db = this._read();
-        db.messages = (db.messages || []).filter(m => m.id !== id);
-        this._save(db);
+        await this._requirePermission('logs:read');
+        const { error } = await this.supabase.from('jcp_messages').delete().eq('id', id);
+        if (error) throw new Error(`Não foi possível excluir a mensagem no Supabase: ${error.message}`);
     }
 
     /* ==========================================================================
@@ -1786,67 +2013,84 @@ class DatabaseService {
     async getMedia() {
         await this._delay();
         await this._requirePermission('media:read');
-        return this._read().media || [];
+        const rows = await this._selectRemoteRows('jcp_media');
+        return rows.map(row => ({
+            id: row.id,
+            title: row.title,
+            alt: row.alt,
+            src: this.supabase.storage.from(JCP_MEDIA_BUCKET).getPublicUrl(row.storage_path).data.publicUrl,
+            createdAt: row.created_at
+        }));
     }
 
     async addMedia(item) {
         await this._delay();
         await this._requirePermission('media:write');
         if (!item?.title?.trim() || !item?.src) throw new Error('Informe um título e selecione uma imagem.');
-        const db = this._read();
         const media = {
             id: `media_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
             title: item.title.trim(),
             alt: (item.alt || item.title).trim(),
-            src: item.src,
             createdAt: new Date().toISOString()
         };
-        db.media = [...(db.media || []), media];
-        this._save(db);
+        const blob = await fetch(item.src).then(response => {
+            if (!response.ok) throw new Error('Não foi possível processar a imagem selecionada.');
+            return response.blob();
+        });
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)) {
+            throw new Error('Formato de imagem inválido para envio.');
+        }
+        const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type.split('/')[1];
+        const storagePath = `${media.id}.${extension}`;
+        const { error: uploadError } = await this.supabase.storage.from(JCP_MEDIA_BUCKET)
+            .upload(storagePath, blob, { contentType: blob.type, upsert: false });
+        if (uploadError) throw new Error(`Não foi possível enviar a imagem ao Supabase Storage: ${uploadError.message}`);
+        const { error: insertError } = await this.supabase.from('jcp_media').insert({
+            id: media.id,
+            title: media.title,
+            alt: media.alt,
+            storage_path: storagePath,
+            created_at: media.createdAt
+        });
+        if (insertError) {
+            const { error: cleanupError } = await this.supabase.storage.from(JCP_MEDIA_BUCKET).remove([storagePath]);
+            if (cleanupError) console.error('Não foi possível remover arquivo após falha do registro de mídia:', cleanupError.message);
+            throw new Error(`Não foi possível registrar a mídia no Supabase: ${insertError.message}`);
+        }
         await this.addAuditLog('MÍDIA_ADICIONADA', media.title, 'Imagem adicionada à galeria administrativa');
-        return media;
+        return { ...media, src: this.supabase.storage.from(JCP_MEDIA_BUCKET).getPublicUrl(storagePath).data.publicUrl };
     }
 
     async deleteMedia(id) {
         await this._delay();
         await this._requirePermission('media:write');
-        const db = this._read();
-        const item = (db.media || []).find(entry => entry.id === id);
+        const { data: item, error: selectError } = await this.supabase.from('jcp_media')
+            .select('id, title, storage_path').eq('id', id).maybeSingle();
+        if (selectError) throw new Error(`Não foi possível localizar a mídia no Supabase: ${selectError.message}`);
         if (!item) return false;
-        db.media = db.media.filter(entry => entry.id !== id);
-        this._save(db);
+        const { error: deleteError } = await this.supabase.from('jcp_media').delete().eq('id', id);
+        if (deleteError) throw new Error(`Não foi possível excluir a mídia do Supabase: ${deleteError.message}`);
+        const { error: storageError } = await this.supabase.storage.from(JCP_MEDIA_BUCKET).remove([item.storage_path]);
+        if (storageError) throw new Error(`Registro excluído, mas o arquivo não foi removido do Storage: ${storageError.message}`);
         await this.addAuditLog('MÍDIA_EXCLUÍDA', item.title, 'Imagem removida da galeria administrativa');
         return true;
     }
 
     async getStats() {
         await this._delay();
-        let participants;
-        let editions;
-        let enrollments;
-        let actions;
-        let contributions;
-        if (this._hasRemoteDataSource() && await this.getCurrentAdmin()) {
-            const [canReadParticipants, canReadEnrollments, canReadContributions] = await Promise.all([
-                this.hasPermission('volunteers:read'),
-                this.hasPermission('enrollments:read'),
-                this.hasPermission('contributions:read')
-            ]);
-            [participants, editions, enrollments, actions, contributions] = await Promise.all([
-                canReadParticipants ? this.getParticipants() : Promise.resolve([]),
-                this.getEditions(),
-                canReadEnrollments ? this.getEnrollments() : Promise.resolve([]),
-                this.getActions(),
-                canReadContributions ? this.getContributions() : Promise.resolve([])
-            ]);
-        } else {
-            const db = this._read();
-            participants = db.participants || [];
-            editions = db.editions || [];
-            enrollments = db.enrollments || [];
-            actions = db.actions || [];
-            contributions = db.contributions || [];
-        }
+        await this._requirePermission('dashboard:read');
+        const [canReadParticipants, canReadEnrollments, canReadContributions] = await Promise.all([
+            this.hasPermission('volunteers:read'),
+            this.hasPermission('enrollments:read'),
+            this.hasPermission('contributions:read')
+        ]);
+        const [participants, editions, enrollments, actions, contributions] = await Promise.all([
+            canReadParticipants ? this.getParticipants() : Promise.resolve([]),
+            this.getEditions(),
+            canReadEnrollments ? this.getEnrollments() : Promise.resolve([]),
+            this.getActions(),
+            canReadContributions ? this.getContributions() : Promise.resolve([])
+        ]);
 
         const volunteers = participants.filter(p => p.isVolunteer);
 
@@ -1889,10 +2133,10 @@ class DatabaseService {
     /**
      * Retorna o total de intercessores únicos que registraram oração.
      */
-    getPrayerCount() {
-        const db = this._read();
-        const prayers = db.prayers || [];
-        return prayers.length;
+    async getPrayerCount() {
+        const { data, error } = await this.supabase.rpc('jcp_public_prayer_count');
+        if (error) throw new Error(`Não foi possível carregar o contador de orações: ${error.message}`);
+        return Number(data) || 0;
     }
 
     /**
@@ -1906,18 +2150,7 @@ class DatabaseService {
             throw new Error('É necessário estar logado para registrar sua oração.');
         }
 
-        const db = this._read();
-        db.prayers = db.prayers || [];
-
         const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-        const alreadyToday = db.prayers.find(
-            p => p.participantId === participant.id && p.date === today
-        );
-
-        if (alreadyToday) {
-            return { success: false, alreadyDone: true, count: db.prayers.length };
-        }
-
         const prayerEntry = {
             id: 'prayer_' + Date.now(),
             participantId: participant.id,
@@ -1926,8 +2159,17 @@ class DatabaseService {
             registeredAt: new Date().toISOString()
         };
 
-        db.prayers.unshift(prayerEntry);
-        this._save(db);
+        const { error } = await this.participantAuth.from('jcp_prayers').insert({
+            id: prayerEntry.id,
+            participant_id: prayerEntry.participantId,
+            participant_name: prayerEntry.participantName,
+            prayer_date: prayerEntry.date,
+            created_at: prayerEntry.registeredAt
+        });
+        if (error?.code === '23505') {
+            return { success: false, alreadyDone: true, count: await this.getPrayerCount() };
+        }
+        if (error) throw new Error(`Não foi possível registrar a oração no Supabase: ${error.message}`);
 
         await this.addAuditLog(
             'ORAÇÃO_REGISTRADA',
@@ -1935,19 +2177,20 @@ class DatabaseService {
             `${participant.name} registrou intercession em ${today}`
         );
 
-        return { success: true, alreadyDone: false, count: db.prayers.length };
+        return { success: true, alreadyDone: false, count: await this.getPrayerCount() };
     }
 
     /**
      * Verifica se o participante já orou hoje.
      */
-    hasParticipantPrayedToday() {
+    async hasParticipantPrayedToday() {
         const participant = this.getCurrentParticipant();
         if (!participant) return false;
-        const db = this._read();
-        const prayers = db.prayers || [];
         const today = new Date().toISOString().slice(0, 10);
-        return !!prayers.find(p => p.participantId === participant.id && p.date === today);
+        const { data, error } = await this.participantAuth.from('jcp_prayers')
+            .select('id').eq('participant_id', participant.id).eq('prayer_date', today).maybeSingle();
+        if (error) throw new Error(`Não foi possível verificar a oração no Supabase: ${error.message}`);
+        return Boolean(data);
     }
 
     /* ==========================================================================
@@ -1964,12 +2207,10 @@ class DatabaseService {
             throw new Error('O comprovante é obrigatório.');
         }
 
-        const db = this._read();
-        db.contributions = db.contributions || [];
-
         const newContrib = {
             id: 'contrib_' + Date.now(),
             name: (data.name && data.name.trim()) ? data.name.trim() : 'Anônimo',
+            donorName: (data.name && data.name.trim()) ? data.name.trim() : 'Anônimo',
             amount: (data.amount && data.amount.trim()) ? data.amount.trim() : '',
             proofFile: data.proofFile,
             proofFileName: data.proofFileName || 'comprovante.png',
@@ -1979,15 +2220,18 @@ class DatabaseService {
             adminNotes: ''
         };
 
-        db.contributions.unshift(newContrib);
-        this._save(db);
-
-        const detailsText = `Comprovante recebido via PIX${newContrib.amount ? '. Valor: ' + newContrib.amount : ''}. Arquivo: ${newContrib.proofFileName}`;
-        await this.addAuditLog(
-            'CONTRIBUIÇÃO_RECEBIDA',
-            newContrib.name,
-            detailsText
-        );
+        const numericAmount = Number(String(newContrib.amount || '0').replace(/[^\d,.-]/g, '').replace(',', '.')) || 0;
+        const { error } = await this.supabase.from('contributions').insert({
+            id: newContrib.id,
+            donor_name: newContrib.name,
+            amount: numericAmount,
+            payment_method: 'PIX',
+            proof_url: newContrib.proofFile,
+            proof_file_name: newContrib.proofFileName,
+            status: newContrib.status,
+            created_at: newContrib.createdAt
+        });
+        if (error) throw new Error(`Não foi possível enviar o comprovante ao Supabase: ${error.message}`);
 
         return newContrib;
     }
@@ -1999,17 +2243,15 @@ class DatabaseService {
     async getDepartments(onlyActive = false) {
         await this._delay(40);
         const remoteRows = await this._selectRemoteRows('departments');
-        let depts = remoteRows === null
-            ? (this._read().departments || [])
-            : remoteRows.map(row => ({
-                id: row.id,
-                name: row.name || '',
-                description: row.description || '',
-                isActive: row.active !== false,
-                displayOrder: row.order_index ?? 0,
-                createdAt: row.created_at || '',
-                updatedAt: row.updated_at || ''
-            }));
+        let depts = remoteRows.map(row => ({
+            id: row.id,
+            name: row.name || '',
+            description: row.description || '',
+            isActive: row.active !== false,
+            displayOrder: row.order_index ?? 0,
+            createdAt: row.created_at || '',
+            updatedAt: row.updated_at || ''
+        }));
         if (onlyActive) depts = depts.filter(d => d.isActive);
         return depts.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     }
@@ -2023,9 +2265,8 @@ class DatabaseService {
         await this._requirePermission('leaders:write');
         await this._delay();
         if (!data.name || !data.name.trim()) throw new Error('O nome do departamento é obrigatório.');
-        const db = this._read();
-        db.departments = db.departments || [];
-        const exists = db.departments.find(d => d.name.toLowerCase().trim() === data.name.toLowerCase().trim());
+        const allDepts = await this.getDepartments();
+        const exists = allDepts.find(d => d.name.toLowerCase().trim() === data.name.toLowerCase().trim());
         if (exists) throw new Error('Já existe um departamento com este nome.');
         const now = new Date().toISOString();
         const newDept = {
@@ -2033,11 +2274,22 @@ class DatabaseService {
             name: data.name.trim(),
             description: (data.description || '').trim(),
             isActive: data.isActive !== false,
+            displayOrder: data.displayOrder !== undefined ? Number(data.displayOrder) : (allDepts.length + 1),
             createdAt: now,
             updatedAt: now
         };
-        db.departments.push(newDept);
-        this._save(db);
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('departments').insert({
+                id: newDept.id,
+                name: newDept.name,
+                description: newDept.description,
+                active: newDept.isActive,
+                order_index: newDept.displayOrder,
+                created_at: newDept.createdAt,
+                updated_at: newDept.updatedAt
+            });
+            if (error) throw new Error(`Não foi possível criar o departamento no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
         await this.addAuditLog('DEPARTAMENTO_CRIADO', newDept.name, `Departamento "${newDept.name}" cadastrado`);
         return newDept;
     }
@@ -2045,13 +2297,21 @@ class DatabaseService {
     async updateDepartment(id, data) {
         await this._requirePermission('leaders:write');
         await this._delay();
-        const db = this._read();
-        db.departments = db.departments || [];
-        const idx = db.departments.findIndex(d => d.id === id);
-        if (idx === -1) throw new Error('Departamento não encontrado.');
-        const updated = { ...db.departments[idx], ...data, updatedAt: new Date().toISOString() };
-        db.departments[idx] = updated;
-        this._save(db);
+        const existing = await this.getDepartmentById(id);
+        if (!existing) throw new Error('Departamento não encontrado.');
+        const updated = { ...existing, ...data, updatedAt: new Date().toISOString() };
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('departments').upsert({
+                id: updated.id,
+                name: updated.name,
+                description: updated.description || '',
+                active: updated.isActive !== false,
+                order_index: Number(updated.displayOrder ?? 0),
+                created_at: updated.createdAt || new Date().toISOString(),
+                updated_at: updated.updatedAt
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar o departamento no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
         await this.addAuditLog('DEPARTAMENTO_ATUALIZADO', updated.name, `Departamento "${updated.name}" atualizado`);
         return updated;
     }
@@ -2059,13 +2319,14 @@ class DatabaseService {
     async deleteDepartment(id) {
         await this._requirePermission('leaders:write');
         await this._delay();
-        const db = this._read();
-        const dept = (db.departments || []).find(d => d.id === id);
+        const dept = await this.getDepartmentById(id);
         if (!dept) throw new Error('Departamento não encontrado.');
-        const hasLeaders = (db.leaders || []).some(l => l.departmentId === id);
-        if (hasLeaders) throw new Error('Este departamento possui líderes vinculados. Reassine-os antes de excluir.');
-        db.departments = db.departments.filter(d => d.id !== id);
-        this._save(db);
+        const linkedLeaders = await this.getLeaders({ departmentId: id });
+        if (linkedLeaders.length > 0) throw new Error('Este departamento possui líderes vinculados. Reassine-os antes de excluir.');
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('departments').delete().eq('id', id);
+            if (error) throw new Error(`Não foi possível excluir o departamento no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
         await this.addAuditLog('DEPARTAMENTO_EXCLUÍDO', dept.name, `Departamento "${dept.name}" excluído`);
         return true;
     }
@@ -2077,30 +2338,22 @@ class DatabaseService {
     async getLeaders(filters = {}) {
         await this._delay(40);
         const remoteRows = await this._selectRemoteRows('leaders');
-        let leaders;
-        let depts;
-        if (remoteRows === null) {
-            const db = this._read();
-            leaders = db.leaders || [];
-            depts = db.departments || [];
-        } else {
-            depts = await this.getDepartments();
-            leaders = remoteRows.map(row => ({
-                id: row.id,
-                fullName: row.full_name || '',
-                departmentId: row.department_id || '',
-                departmentName: row.department_name || '',
-                roleTitle: row.role_title || '',
-                biography: row.biography || '',
-                photoPath: row.photo_url || '',
-                instagramUrl: row.instagram_url || '',
-                displayOrder: row.order_index ?? 999,
-                isActive: row.active !== false,
-                isPublished: row.published !== false,
-                createdAt: row.created_at || '',
-                updatedAt: row.updated_at || ''
-            }));
-        }
+        const depts = await this.getDepartments();
+        let leaders = remoteRows.map(row => ({
+            id: row.id,
+            fullName: row.full_name || '',
+            departmentId: row.department_id || '',
+            departmentName: row.department_name || '',
+            roleTitle: row.role_title || '',
+            biography: row.biography || '',
+            photoPath: row.photo_url || '',
+            instagramUrl: row.instagram_url || '',
+            displayOrder: row.order_index ?? 999,
+            isActive: row.active !== false,
+            isPublished: row.published !== false,
+            createdAt: row.created_at || '',
+            updatedAt: row.updated_at || ''
+        }));
 
         // Enrich with department name
         leaders = leaders.map(l => ({
@@ -2140,10 +2393,13 @@ class DatabaseService {
         if (!data.departmentId) throw new Error('O departamento é obrigatório.');
         if (!data.biography || !data.biography.trim()) throw new Error('A apresentação é obrigatória.');
         const now = new Date().toISOString();
+        const dept = await this.getDepartmentById(data.departmentId);
+        if (!dept) throw new Error('Departamento selecionado não foi encontrado.');
         const newLeader = {
             id: 'leader_' + Date.now(),
             fullName: data.fullName.trim(),
             departmentId: data.departmentId,
+            departmentName: dept?.name || data.departmentName || '',
             roleTitle: (data.roleTitle || '').trim(),
             biography: data.biography.trim(),
             photoPath: data.photoPath || '',
@@ -2154,10 +2410,24 @@ class DatabaseService {
             createdAt: now,
             updatedAt: now
         };
-        const db = this._read();
-        db.leaders = db.leaders || [];
-        db.leaders.push(newLeader);
-        this._save(db);
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('leaders').insert({
+                id: newLeader.id,
+                full_name: newLeader.fullName,
+                department_id: newLeader.departmentId,
+                department_name: newLeader.departmentName,
+                role_title: newLeader.roleTitle,
+                biography: newLeader.biography,
+                photo_url: newLeader.photoPath,
+                instagram_url: newLeader.instagramUrl,
+                order_index: newLeader.displayOrder,
+                active: newLeader.isActive,
+                published: newLeader.isPublished,
+                created_at: newLeader.createdAt,
+                updated_at: newLeader.updatedAt
+            });
+            if (error) throw new Error(`Não foi possível cadastrar o líder no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
         await this.addAuditLog('LÍDER_CRIADO', newLeader.fullName, `Líder "${newLeader.fullName}" cadastrado`);
         return newLeader;
     }
@@ -2165,47 +2435,59 @@ class DatabaseService {
     async updateLeader(id, data) {
         await this._requirePermission('leaders:write');
         await this._delay();
-        const db = this._read();
-        db.leaders = db.leaders || [];
-        const idx = db.leaders.findIndex(l => l.id === id);
-        if (idx === -1) throw new Error('Líder não encontrado.');
+        const existing = await this.getLeaderById(id);
+        if (!existing) throw new Error('Líder não encontrado.');
         const cleanData = { ...data };
         Object.keys(cleanData).forEach(k => { if (cleanData[k] === undefined) delete cleanData[k]; });
+        const dept = cleanData.departmentId ? await this.getDepartmentById(cleanData.departmentId) : null;
+        if (cleanData.departmentId && !dept) throw new Error('Departamento selecionado não foi encontrado.');
         const updated = {
-            ...db.leaders[idx],
+            ...existing,
             ...cleanData,
-            displayOrder: cleanData.displayOrder !== undefined ? Number(cleanData.displayOrder) : db.leaders[idx].displayOrder,
+            departmentName: dept?.name || cleanData.departmentName || existing.departmentName || '',
+            displayOrder: cleanData.displayOrder !== undefined ? Number(cleanData.displayOrder) : existing.displayOrder,
             updatedAt: new Date().toISOString()
         };
-        db.leaders[idx] = updated;
-        this._save(db);
+        if (this._hasRemoteDataSource()) {
+            const { error } = await this.supabase.from('leaders').upsert({
+                id: updated.id,
+                full_name: updated.fullName,
+                department_id: updated.departmentId,
+                department_name: updated.departmentName,
+                role_title: updated.roleTitle || '',
+                biography: updated.biography || '',
+                photo_url: updated.photoPath || '',
+                instagram_url: updated.instagramUrl || '',
+                order_index: Number(updated.displayOrder ?? 999),
+                active: updated.isActive !== false,
+                published: Boolean(updated.isPublished),
+                created_at: updated.createdAt || new Date().toISOString(),
+                updated_at: updated.updatedAt
+            }, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível atualizar o líder no Supabase: ${error.message || 'Erro de permissão/banco'}`);
+        }
         await this.addAuditLog('LÍDER_ATUALIZADO', updated.fullName, `Líder "${updated.fullName}" atualizado`);
         return updated;
     }
 
     async toggleLeaderPublish(id) {
         await this._requirePermission('leaders:write');
-        const db = this._read();
-        const idx = (db.leaders || []).findIndex(l => l.id === id);
-        if (idx === -1) throw new Error('Líder não encontrado.');
-        const leader = db.leaders[idx];
-        leader.isPublished = !leader.isPublished;
-        leader.updatedAt = new Date().toISOString();
-        db.leaders[idx] = leader;
-        this._save(db);
-        const action = leader.isPublished ? 'LÍDER_PUBLICADO' : 'LÍDER_DESPUBLICADO';
-        await this.addAuditLog(action, leader.fullName, `Status de publicação alterado para "${leader.isPublished ? 'Publicado' : 'Rascunho'}"`);
-        return leader;
+        const leader = await this.getLeaderById(id);
+        if (!leader) throw new Error('Líder não encontrado.');
+        const nextPublished = !leader.isPublished;
+        const updated = await this.updateLeader(id, { isPublished: nextPublished });
+        const action = updated.isPublished ? 'LÍDER_PUBLICADO' : 'LÍDER_DESPUBLICADO';
+        await this.addAuditLog(action, updated.fullName, `Status de publicação alterado para "${updated.isPublished ? 'Publicado' : 'Rascunho'}"`);
+        return updated;
     }
 
     async deleteLeader(id) {
         await this._requirePermission('leaders:write');
         await this._delay();
-        const db = this._read();
-        const leader = (db.leaders || []).find(l => l.id === id);
+        const leader = await this.getLeaderById(id);
         if (!leader) throw new Error('Líder não encontrado.');
-        db.leaders = db.leaders.filter(l => l.id !== id);
-        this._save(db);
+        const { error } = await this.supabase.from('leaders').delete().eq('id', id);
+        if (error) throw new Error(`Não foi possível excluir o líder no Supabase: ${error.message || 'Erro de permissão/banco'}`);
         await this.addAuditLog('LÍDER_EXCLUÍDO', leader.fullName, `Líder "${leader.fullName}" excluído do sistema`);
         return true;
     }
@@ -2214,7 +2496,250 @@ class DatabaseService {
     async getPublicLeaders() {
         return this.getLeaders({ onlyPublished: true });
     }
+
+    /* ==========================================================================
+       13. TESTEMUNHOS — GALERIA DE VÍDEOS
+       ========================================================================== */
+
+    _normalizeTestimonial(row) {
+        if (!row || typeof row !== 'object') return null;
+        const isPublished = row.status === 'published'
+            ? true
+            : (row.status === 'draft' ? false : (row.published !== undefined ? Boolean(row.published) : Boolean(row.isPublished !== false)));
+        const status = isPublished ? 'published' : 'draft';
+        const videoUrl = (row.videoUrl || row.video_url || '').trim();
+        let thumbnailUrl = (row.thumbnailUrl || row.thumbnail_url || '').trim();
+
+        // Gera capa automática para vídeos do YouTube quando não houver thumbnail personalizada
+        if (!thumbnailUrl && videoUrl) {
+            const ytMatch = videoUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+            if (ytMatch && ytMatch[1]) {
+                thumbnailUrl = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+            }
+        }
+
+        const personName = (row.personName || row.person_name || row.name || '').trim();
+        const displayOrder = Number.isFinite(Number(row.displayOrder ?? row.order_index))
+            ? Number(row.displayOrder ?? row.order_index)
+            : 999;
+
+        return {
+            id: String(row.id || `test_${Date.now()}`),
+            title: (row.title || '').trim(),
+            personName,
+            name: personName,
+            description: (row.description || '').trim(),
+            videoUrl,
+            thumbnailUrl,
+            status,
+            isPublished,
+            isActive: row.active !== undefined ? Boolean(row.active) : (row.isActive !== false),
+            displayOrder,
+            createdAt: row.createdAt || row.created_at || new Date().toISOString(),
+            updatedAt: row.updatedAt || row.updated_at || new Date().toISOString()
+        };
+    }
+
+    async _syncTestimonialRemote(action, payload) {
+        if (!this._hasRemoteDataSource()) throw new Error('Supabase não está configurado.');
+        if (action === 'upsert') {
+            const row = {
+                id: payload.id,
+                title: payload.title,
+                person_name: payload.personName,
+                description: payload.description || '',
+                video_url: payload.videoUrl,
+                thumbnail_url: payload.thumbnailUrl || '',
+                status: payload.isPublished ? 'published' : 'draft',
+                published: Boolean(payload.isPublished),
+                active: payload.isActive !== false,
+                order_index: Number(payload.displayOrder || 1),
+                created_at: payload.createdAt,
+                updated_at: payload.updatedAt
+            };
+            const { error } = await this.supabase.from('testimonials').upsert(row, { onConflict: 'id' });
+            if (error) throw new Error(`Não foi possível salvar o testemunho no Supabase: ${error.message}`);
+            return true;
+        }
+        if (action === 'delete') {
+            const { error } = await this.supabase.from('testimonials').delete().eq('id', payload.id);
+            if (error) throw new Error(`Não foi possível excluir o testemunho no Supabase: ${error.message}`);
+            return true;
+        }
+        throw new Error(`Operação de testemunho não suportada: ${action}`);
+    }
+
+    async getTestimonials(filters = {}) {
+        await this._delay(40);
+        const rows = await this._selectRemoteRows('testimonials');
+        let items = rows.map(row => this._normalizeTestimonial(row)).filter(Boolean);
+
+        if (filters.onlyPublished) {
+            items = items.filter(t => t.isPublished && t.isActive !== false);
+        }
+        if (filters.status === 'published') {
+            items = items.filter(t => t.isPublished);
+        } else if (filters.status === 'draft') {
+            items = items.filter(t => !t.isPublished);
+        }
+        if (filters.search) {
+            const q = filters.search.trim().toLowerCase();
+            if (q) {
+                items = items.filter(t =>
+                    t.title.toLowerCase().includes(q) ||
+                    t.personName.toLowerCase().includes(q) ||
+                    (t.description && t.description.toLowerCase().includes(q))
+                );
+            }
+        }
+
+        return items.sort((a, b) => {
+            const oa = a.displayOrder ?? 999;
+            const ob = b.displayOrder ?? 999;
+            if (oa !== ob) return oa - ob;
+            return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        });
+    }
+
+    async getPublicTestimonials() {
+        return this.getTestimonials({ onlyPublished: true });
+    }
+
+    async getTestimonialById(id) {
+        const list = await this.getTestimonials();
+        return list.find(item => item.id === id) || null;
+    }
+
+    async createTestimonial(data) {
+        await this._requirePermission('testimonials:write');
+        await this._delay();
+
+        const title = (data?.title || '').trim();
+        const personName = (data?.personName || data?.name || '').trim();
+        const videoUrl = (data?.videoUrl || '').trim();
+        const description = (data?.description || '').trim();
+
+        if (!title) throw new Error('O título do testemunho é obrigatório.');
+        if (!personName) throw new Error('O nome da pessoa é obrigatório.');
+        if (!videoUrl) throw new Error('O vídeo do testemunho é obrigatório.');
+
+        const isPublished = data.status
+            ? data.status === 'published'
+            : (data.isPublished !== false);
+        const now = new Date().toISOString();
+
+        const normalized = this._normalizeTestimonial({
+            id: 'test_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            title,
+            personName,
+            description,
+            videoUrl,
+            thumbnailUrl: (data.thumbnailUrl || '').trim(),
+            status: isPublished ? 'published' : 'draft',
+            isPublished,
+            isActive: true,
+            displayOrder: data.displayOrder !== undefined && data.displayOrder !== '' ? Number(data.displayOrder) : 1,
+            createdAt: now,
+            updatedAt: now
+        });
+
+        await this._syncTestimonialRemote('upsert', normalized);
+
+        await this.addAuditLog(
+            'TESTEMUNHO_CRIADO',
+            `${normalized.title} (${normalized.personName})`,
+            `Testemunho cadastrado com status "${normalized.isPublished ? 'Publicado' : 'Rascunho'}" (Ordem: ${normalized.displayOrder})`
+        );
+        return normalized;
+    }
+
+    async updateTestimonial(id, data) {
+        await this._requirePermission('testimonials:write');
+        await this._delay();
+
+        const existingItem = await this.getTestimonialById(id);
+        if (!existingItem) throw new Error('Testemunho não encontrado.');
+
+        const title = data.title !== undefined ? String(data.title).trim() : existingItem.title;
+        const personName = (data.personName !== undefined || data.name !== undefined)
+            ? String(data.personName ?? data.name).trim()
+            : existingItem.personName;
+        const videoUrl = data.videoUrl !== undefined ? String(data.videoUrl).trim() : existingItem.videoUrl;
+        const description = data.description !== undefined ? String(data.description).trim() : (existingItem.description || '');
+        const thumbnailUrl = data.thumbnailUrl !== undefined ? String(data.thumbnailUrl).trim() : (existingItem.thumbnailUrl || '');
+
+        if (!title) throw new Error('O título do testemunho é obrigatório.');
+        if (!personName) throw new Error('O nome da pessoa é obrigatório.');
+        if (!videoUrl) throw new Error('O vídeo do testemunho é obrigatório.');
+
+        const isPublished = data.status !== undefined
+            ? data.status === 'published'
+            : (data.isPublished !== undefined ? Boolean(data.isPublished) : Boolean(existingItem.isPublished));
+
+        const displayOrder = data.displayOrder !== undefined && data.displayOrder !== ''
+            ? Number(data.displayOrder)
+            : Number(existingItem.displayOrder || 1);
+
+        const updated = this._normalizeTestimonial({
+            ...existingItem,
+            id,
+            title,
+            personName,
+            description,
+            videoUrl,
+            thumbnailUrl,
+            status: isPublished ? 'published' : 'draft',
+            isPublished,
+            displayOrder,
+            updatedAt: new Date().toISOString()
+        });
+
+        await this._syncTestimonialRemote('upsert', updated);
+
+        await this.addAuditLog(
+            'TESTEMUNHO_ATUALIZADO',
+            `${updated.title} (${updated.personName})`,
+            `Testemunho atualizado (Ordem: ${updated.displayOrder}, Status: ${updated.isPublished ? 'Publicado' : 'Rascunho'})`
+        );
+        return updated;
+    }
+
+    async toggleTestimonialPublish(id) {
+        await this._requirePermission('testimonials:write');
+        const existing = await this.getTestimonialById(id);
+        if (!existing) throw new Error('Testemunho não encontrado.');
+        const nextPublished = !existing.isPublished;
+        const updated = await this.updateTestimonial(id, {
+            isPublished: nextPublished,
+            status: nextPublished ? 'published' : 'draft'
+        });
+        const action = updated.isPublished ? 'TESTEMUNHO_PUBLICADO' : 'TESTEMUNHO_DESPUBLICADO';
+        await this.addAuditLog(
+            action,
+            `${updated.title} (${updated.personName})`,
+            `Status de publicação alterado para "${updated.isPublished ? 'Publicado' : 'Rascunho'}"`
+        );
+        return updated;
+    }
+
+    async deleteTestimonial(id) {
+        await this._requirePermission('testimonials:write');
+        await this._delay();
+        const existing = await this.getTestimonialById(id);
+        if (!existing) throw new Error('Testemunho não encontrado.');
+
+        await this._syncTestimonialRemote('delete', { id });
+
+        await this.addAuditLog(
+            'TESTEMUNHO_EXCLUÍDO',
+            `${existing.title} (${existing.personName})`,
+            `Testemunho de "${existing.personName}" excluído do sistema`
+        );
+        return true;
+    }
 }
 
 // Instância global disponível como window.db
-window.db = new DatabaseService();
+if (typeof window !== 'undefined') {
+    window.db = new DatabaseService();
+}

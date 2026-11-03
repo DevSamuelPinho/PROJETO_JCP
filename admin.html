@@ -11,9 +11,11 @@
     <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="css/test-environment.css">
     <link rel="icon" type="image/svg+xml" href="assets/brand/jcp_simbolo_isolado.svg">
 </head>
 <body>
+<div class="test-environment-badge" role="status">AMBIENTE DE TESTE</div>
 
 <!-- ==============================================================================
      TELA DE LOGIN ADMINISTRATIVO (SEGURANÇA & SESSÃO)
@@ -91,6 +93,9 @@
             </a>
             <a href="#departamentos" class="nav-item" data-target="departamentos" data-perm="leaders:read">
                 <i class="ph ph-git-branch"></i> Departamentos
+            </a>
+            <a href="#testemunhos" class="nav-item" data-target="testemunhos" data-perm="testimonials:read">
+                <i class="ph ph-video-camera"></i> Testemunhos
             </a>
 
             <span class="nav-category">Sistema</span>
@@ -834,6 +839,65 @@
                 </div>
             </section>
 
+            <!-- ============================================ -->
+            <!-- 13. GESTÃO DE TESTEMUNHOS (GALERIA DE VÍDEOS) -->
+            <!-- ============================================ -->
+            <section id="testemunhos" class="admin-section">
+                <div class="section-toolbar">
+                    <div>
+                        <h2 class="section-heading">Testemunhos — Galeria de Vídeos</h2>
+                        <p class="section-desc">Cadastre e gerencie depoimentos em vídeo de participantes, jovens e pessoas impactadas pelo projeto.</p>
+                    </div>
+                    <button class="btn-primary" id="btn-new-testimonial">
+                        <i class="ph ph-plus"></i> Novo Testemunho
+                    </button>
+                </div>
+
+                <!-- Barra de Filtros e Busca -->
+                <div class="panel mb-4">
+                    <div class="panel-body" style="padding: 16px 20px;">
+                        <div class="filter-bar" style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+                            <div class="search-bar" style="flex: 1; min-width: 240px; margin: 0;">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" placeholder="Buscar por título, nome ou descrição..." id="filter-testimonial-search">
+                            </div>
+                            <div style="min-width: 190px;">
+                                <select id="filter-testimonial-status" class="select-input" style="width: 100%;">
+                                    <option value="">Todos os Status</option>
+                                    <option value="published">Publicados no Site</option>
+                                    <option value="draft">Rascunhos (Ocultos)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabela de Testemunhos -->
+                <div class="panel">
+                    <div class="table-container">
+                        <table class="data-table" id="testimonials-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 110px;">Vídeo / Capa</th>
+                                    <th>Título & Depoente</th>
+                                    <th style="width: 120px; text-align: center;">Ordem</th>
+                                    <th style="width: 125px;">Status</th>
+                                    <th style="width: 135px;">Data de Cadastro</th>
+                                    <th style="width: 185px; text-align: right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="testimonials-table-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                                        Carregando testemunhos...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
         </div><!-- /content-area -->
     </main>
 </div>
@@ -1230,6 +1294,8 @@
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="enrollments:read"> Ver Inscrições</label>
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="enrollments:write"> Aprovar Inscrições</label>
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="media:write"> Gerenciar Mídia</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="testimonials:read"> Ver Testemunhos</label>
+                    <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="testimonials:write"> Gerenciar Testemunhos</label>
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="content:write"> Editar Textos (CMS)</label>
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="logs:read"> Ver Auditoria / Logs</label>
                     <label class="permission-checkbox-label"><input type="checkbox" name="role_perm" value="settings:write"> Configurações Globais</label>
@@ -1374,6 +1440,145 @@
     </div>
 </div>
 
+<!-- ==============================================================================
+     MODAIS DE TESTEMUNHOS (GALERIA DE VÍDEOS)
+     ============================================================================== -->
+
+<!-- MODAL: CRIAR / EDITAR TESTEMUNHO -->
+<div class="modal-overlay" id="modal-testimonial" style="display:none;">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3 id="modal-testimonial-title">Novo Testemunho</h3>
+            <button class="modal-close" id="modal-testimonial-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body form-layout">
+            <input type="hidden" id="form-testimonial-id">
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="form-testimonial-title">Título do Testemunho *</label>
+                    <input type="text" id="form-testimonial-title" class="text-input" placeholder="Ex: Deus restaurou minha vocação na 2ª Edição" required>
+                </div>
+                <div class="form-group">
+                    <label for="form-testimonial-name">Nome da Pessoa (Depoente) *</label>
+                    <input type="text" id="form-testimonial-name" class="text-input" placeholder="Ex: Lucas Andrade" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                    <label for="form-testimonial-desc">Descrição / Contexto (Opcional)</label>
+                    <span id="form-testimonial-desc-counter" style="font-size: 0.75rem; color: var(--text-muted);">0 / 400</span>
+                </div>
+                <textarea id="form-testimonial-desc" class="text-area" rows="3" maxlength="400"
+                    placeholder="Breve texto contextualizando o depoimento, a edição ou a experiência vivida..."></textarea>
+            </div>
+
+            <!-- Campo de Vídeo (Link ou Upload) + Prévia em Tempo Real -->
+            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                <label for="form-testimonial-video-url">Vídeo do Testemunho (Link ou Arquivo) *</label>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <input type="text" id="form-testimonial-video-url" class="text-input" style="flex: 1; min-width: 240px;"
+                        placeholder="Cole o link do YouTube, Vimeo ou URL direta (.mp4, .webm)..." required>
+                    <input type="file" id="form-testimonial-video-file" accept="video/mp4,video/webm,video/ogg" style="display:none;">
+                    <button type="button" class="btn-outline" id="btn-browse-testimonial-video">
+                        <i class="ph ph-video"></i> Enviar Vídeo (.mp4/.webm)
+                    </button>
+                </div>
+                <p class="form-hint" style="margin-top: 4px;">
+                    Aceita links do YouTube (normal ou Shorts), Vimeo, URL direta de vídeo (<code>.mp4</code> / <code>.webm</code>) ou upload de arquivo de vídeo.
+                </p>
+
+                <!-- Prévia em Tempo Real do Vídeo no Formulário -->
+                <div class="testimonial-video-form-preview" id="testimonial-video-form-preview" style="display:none; margin-top: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--primary);">
+                            <i class="ph ph-play-circle"></i> Prévia do Vídeo
+                        </span>
+                        <span id="testimonial-video-source-badge" style="font-size: 11px; color: var(--text-muted); font-weight: 600;"></span>
+                    </div>
+                    <div class="testimonial-video-player-frame" id="testimonial-video-form-player"></div>
+                </div>
+            </div>
+
+            <!-- Thumbnail / Capa do Vídeo -->
+            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                <label>Thumbnail / Imagem de Capa (Opcional)</label>
+                <div class="leader-upload-container">
+                    <div class="testimonial-thumb-preview-box" id="testimonial-thumb-preview-box">
+                        <span class="preview-empty-text" id="testimonial-thumb-empty-text">Capa Padrão</span>
+                        <img id="testimonial-thumb-img" src="" alt="Preview da Thumbnail" style="display:none;" class="testimonial-thumb-preview-img">
+                    </div>
+                    <div class="leader-upload-controls">
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <input type="file" id="form-testimonial-thumb-file" accept="image/png,image/webp,image/jpeg" style="display:none;">
+                            <button type="button" class="btn-outline btn-sm" id="btn-browse-testimonial-thumb">
+                                <i class="ph ph-image"></i> Enviar Imagem de Capa
+                            </button>
+                            <button type="button" class="btn-outline btn-sm" id="btn-capture-testimonial-thumb">
+                                <i class="ph ph-sparkle"></i> Gerar Prévia Automática
+                            </button>
+                            <button type="button" class="btn-ghost btn-sm text-danger" id="btn-remove-testimonial-thumb" style="display:none;">
+                                <i class="ph ph-trash"></i> Remover Capa
+                            </button>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <input type="text" id="form-testimonial-thumb-url" class="text-input"
+                                placeholder="Ou cole uma URL de imagem de capa (opcional)...">
+                        </div>
+                        <p class="form-hint" style="margin-top: 6px;">
+                            Se deixado em branco, o sistema gera automaticamente a capa do YouTube, captura um quadro do vídeo ou aplica a capa padrão do JCP.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status e Ordem de Exibição -->
+            <div class="form-row" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                <div class="form-group">
+                    <label for="form-testimonial-status">Status de Publicação *</label>
+                    <select id="form-testimonial-status" class="select-input" style="width: 100%;">
+                        <option value="published">Publicado (Visível na Galeria Pública)</option>
+                        <option value="draft">Rascunho (Oculto no Site)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="form-testimonial-order">Ordem de Exibição na Galeria *</label>
+                    <input type="number" id="form-testimonial-order" class="text-input" value="1" min="1" max="999" required>
+                    <p class="form-hint">Menor número aparece primeiro na galeria (ex: 1, 2, 3...).</p>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-cancel-testimonial">Cancelar</button>
+            <button class="btn-primary" id="btn-save-testimonial"><i class="ph ph-check"></i> Salvar Testemunho</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: VISUALIZAR PRÉVIA DE VÍDEO DO TESTEMUNHO -->
+<div class="modal-overlay" id="modal-testimonial-preview" style="display:none;">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h3 id="preview-testimonial-title">Prévia do Testemunho</h3>
+            <button class="modal-close" id="modal-testimonial-preview-close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="modal-body">
+            <div class="testimonial-video-player-frame" id="preview-testimonial-player" style="min-height: 360px;"></div>
+            <div style="margin-top: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap;">
+                <div>
+                    <div id="preview-testimonial-person" style="font-weight: 800; font-size: 15px; color: var(--text-main);">—</div>
+                    <p id="preview-testimonial-desc" style="font-size: 13px; color: var(--text-muted); margin-top: 4px; line-height: 1.5;"></p>
+                </div>
+                <span id="preview-testimonial-status-badge"></span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" id="btn-close-testimonial-preview">Fechar Prévia</button>
+        </div>
+    </div>
+</div>
+
 <!-- SCRIPTS -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/supabase-config.js"></script>
@@ -1381,4 +1586,3 @@
 <script src="js/admin.js"></script>
 </body>
 </html>
-

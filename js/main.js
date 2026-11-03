@@ -49,16 +49,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPrayerCounter();
   initContribuicaoForm();
 
-  // Módulo Lideranças
+  // Módulo Lideranças e Testemunhos
   await renderPublicLeaders();
+  await renderPublicTestimonials();
 
   // Sincronização em tempo real entre abas (ex: ao excluir ou editar edições no admin)
   window.addEventListener('storage', async (e) => {
-    if (e.key === 'jcp_system_db_v3') {
+    if (e.key === 'jcp_system_db_v4' || e.key === 'jcp_system_db_v3') {
       await initEditionsFromDB();
       await initSettingsData();
       await initCMSData();
       await renderPublicLeaders();
+      await renderPublicTestimonials();
     }
   });
 });
@@ -276,6 +278,10 @@ function openModal(modal) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === 'modal-cadastro-participante') window.resetParticipantAuthUi?.();
+  if (modal.id === 'modal-video-testemunho') {
+    const playerContainer = document.getElementById('modal-testemunho-player-container');
+    if (playerContainer) playerContainer.replaceChildren();
+  }
   modal.classList.remove('active');
   document.body.style.overflow = '';
 }
@@ -882,14 +888,12 @@ function initParticipantAuthForms() {
         const email = normalizeEmail(document.getElementById('login-part-email').value);
         const password = document.getElementById('login-part-password').value;
         const authUser = await window.db.loginParticipant(email, password);
-        const pending = window.db.getPendingParticipantSignup();
-        const participant = pending && window.db._normalizeParticipantEmail(pending.email) === window.db._normalizeParticipantEmail(email)
-          ? await window.db.completePendingParticipantSignup()
-          : await window.db.getParticipantByEmail(email);
+        const participant = await window.db.completePendingParticipantSignup()
+          || await window.db.getParticipantByEmail(email);
 
         if (!participant) {
           await window.db.logoutParticipant();
-          throw new Error('A conta autenticou, mas não há cadastro de participante neste navegador. Use Novo Cadastro para concluir seu perfil.');
+          throw new Error('A conta autenticou, mas não há perfil de participante vinculado. Use Novo Cadastro para concluir seu perfil.');
         }
         if (window.db._normalizeParticipantEmail(authUser.email) !== window.db._normalizeParticipantEmail(participant.email)) {
           await window.db.logoutParticipant();
@@ -970,7 +974,7 @@ function initParticipantAuthForms() {
           throw new Error('Este e-mail já está vinculado a outro cadastro.');
         }
 
-        const authResult = await window.db.createParticipantAccount(participantPayload.email, password);
+        const authResult = await window.db.createParticipantAccount(participantPayload.email, password, participantPayload);
         window.db.setPendingParticipantSignup(participantPayload);
         if (authResult.session) {
           const participant = await window.db.completePendingParticipantSignup();
@@ -1078,20 +1082,25 @@ function showToast(message) {
    ============================================================================== */
 function initPrayerCounter() {
   // Atualiza o número no card público e no modal
-  function updatePrayerCountDisplay() {
-    const count = window.db.getPrayerCount();
+  async function updatePrayerCountDisplay() {
     const displayEls = [
       document.getElementById('prayer-counter-num'),
       document.getElementById('prayer-counter-modal-num')
     ];
-    displayEls.forEach(el => { if (el) el.textContent = count; });
+    try {
+      const count = await window.db.getPrayerCount();
+      displayEls.forEach(el => { if (el) el.textContent = count; });
+    } catch (error) {
+      displayEls.forEach(el => { if (el) el.textContent = '—'; });
+      console.error('Não foi possível carregar o contador de orações.', error);
+    }
   }
 
   // Configura estado do modal ao abrir
   const btnOrando = document.getElementById('btn-orando');
   if (btnOrando) {
-    btnOrando.addEventListener('click', () => {
-      updatePrayerCountDisplay();
+    btnOrando.addEventListener('click', async () => {
+      await updatePrayerCountDisplay();
       const participant = window.db.getCurrentParticipant();
       const authRequired = document.getElementById('prayer-auth-required');
       const alreadyDone = document.getElementById('prayer-already-done');
@@ -1102,7 +1111,7 @@ function initPrayerCounter() {
         if (authRequired) authRequired.style.display = 'block';
         if (alreadyDone) alreadyDone.style.display = 'none';
         if (formOrando) formOrando.style.display = 'none';
-      } else if (window.db.hasParticipantPrayedToday()) {
+      } else if (await window.db.hasParticipantPrayedToday()) {
         // Já orou hoje
         if (authRequired) authRequired.style.display = 'none';
         if (alreadyDone) alreadyDone.style.display = 'block';
@@ -1134,10 +1143,13 @@ function initPrayerCounter() {
           showToast(`🙏 Obrigado! Você é o ${result.count}º intercessor registrado!`);
         }
       } catch (err) {
-        // Precisa de login
         closeModal(document.getElementById('modal-orando'));
-        openModal(document.getElementById('modal-cadastro-participante'));
-        showToast('Faça seu cadastro para registrar sua oração.');
+        if (!window.db.getCurrentParticipant()) {
+          openModal(document.getElementById('modal-cadastro-participante'));
+          showToast('Faça seu cadastro para registrar sua oração.');
+        } else {
+          showToast(err.message || 'Não foi possível registrar sua oração no banco de dados.');
+        }
       }
     });
   }
@@ -1407,5 +1419,197 @@ async function renderPublicLeaders() {
   } catch (err) {
     grid.innerHTML = `<div class="leaders-loading" style="color:#EF4444;">⚠️ Erro ao carregar lideranças.</div>`;
     console.error('[JCP] Erro ao carregar líderes públicos:', err);
+  }
+}
+
+/* ==============================================================================
+   TESTEMUNHOS (GALERIA DE VÍDEOS) — RENDERIZAÇÃO PÚBLICA
+   ============================================================================== */
+function parsePublicVideoUrl(rawUrl) {
+  const url = (rawUrl || '').trim();
+  if (!url) return { type: 'none', url: '', embedUrl: '', autoThumb: '' };
+
+  const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  if (ytMatch && ytMatch[1]) {
+    const id = ytMatch[1];
+    return {
+      type: 'youtube',
+      url,
+      embedUrl: `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`,
+      autoThumb: `https://img.youtube.com/vi/${id}/hqdefault.jpg`
+    };
+  }
+
+  const vimeoMatch = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (vimeoMatch && vimeoMatch[1]) {
+    const id = vimeoMatch[1];
+    return {
+      type: 'vimeo',
+      url,
+      embedUrl: `https://player.vimeo.com/video/${id}?autoplay=1`,
+      autoThumb: ''
+    };
+  }
+
+  return {
+    type: 'video',
+    url,
+    embedUrl: url,
+    autoThumb: ''
+  };
+}
+
+function openPublicTestimonialVideoModal(testimonial) {
+  const modal = document.getElementById('modal-video-testemunho');
+  const playerContainer = document.getElementById('modal-testemunho-player-container');
+  const titleEl = document.getElementById('modal-testemunho-video-title');
+  const personEl = document.getElementById('modal-testemunho-person-name');
+  const descEl = document.getElementById('modal-testemunho-video-desc');
+  if (!modal || !playerContainer || !testimonial) return;
+
+  if (titleEl) titleEl.textContent = testimonial.title || 'Testemunho';
+  if (personEl) personEl.textContent = testimonial.personName || '';
+  if (descEl) {
+    descEl.textContent = testimonial.description || '';
+    descEl.style.display = testimonial.description ? 'block' : 'none';
+  }
+
+  playerContainer.replaceChildren();
+  const info = parsePublicVideoUrl(testimonial.videoUrl);
+  const thumb = testimonial.thumbnailUrl || info.autoThumb || 'assets/images/noite_clamor.jpg';
+
+  if (info.type === 'youtube' || info.type === 'vimeo') {
+    const iframe = document.createElement('iframe');
+    iframe.src = info.embedUrl;
+    iframe.title = testimonial.title || 'Vídeo de testemunho';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    iframe.className = 'testimonial-modal-iframe';
+    playerContainer.appendChild(iframe);
+  } else if (info.type === 'video') {
+    const video = document.createElement('video');
+    video.src = info.url;
+    video.poster = thumb;
+    video.controls = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.className = 'testimonial-modal-video';
+    playerContainer.appendChild(video);
+  }
+
+  openModal(modal);
+}
+
+async function renderPublicTestimonials() {
+  const grid = document.getElementById('testimonials-grid-public');
+  const emptyState = document.getElementById('testimonials-empty-state');
+  if (!grid) return;
+
+  try {
+    const testimonials = await window.db.getPublicTestimonials();
+    grid.replaceChildren();
+
+    if (!testimonials || testimonials.length === 0) {
+      grid.style.display = 'none';
+      if (emptyState) emptyState.style.display = 'block';
+      return;
+    }
+
+    if (emptyState) emptyState.style.display = 'none';
+    grid.style.display = 'grid';
+
+    testimonials.forEach((item) => {
+      const info = parsePublicVideoUrl(item.videoUrl);
+      const thumbSrc = item.thumbnailUrl || info.autoThumb || 'assets/images/noite_clamor.jpg';
+      const initials = (item.personName || 'JC')
+        .split(' ')
+        .filter(Boolean)
+        .map(w => w[0])
+        .join('')
+        .substring(0, 2)
+        .toUpperCase();
+
+      const card = document.createElement('article');
+      card.className = 'testimonial-video-card';
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `Assistir testemunho: ${item.title} — ${item.personName}`);
+
+      const mediaWrap = document.createElement('div');
+      mediaWrap.className = 'testimonial-card-media';
+
+      const img = document.createElement('img');
+      img.src = thumbSrc;
+      img.alt = item.title || `Testemunho de ${item.personName}`;
+      img.loading = 'lazy';
+      img.className = 'testimonial-card-thumb';
+      img.onerror = () => { img.src = 'assets/images/noite_clamor.jpg'; };
+
+      const overlay = document.createElement('div');
+      overlay.className = 'testimonial-card-play-overlay';
+      overlay.innerHTML = `
+        <span class="testimonial-play-circle" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="8 5 19 12 8 19 8 5"></polygon>
+          </svg>
+        </span>
+        <span class="testimonial-watch-label">ASSISTIR DEPOIMENTO</span>
+      `;
+
+      mediaWrap.append(img, overlay);
+
+      const body = document.createElement('div');
+      body.className = 'testimonial-card-body';
+
+      const title = document.createElement('h3');
+      title.className = 'testimonial-card-title';
+      title.textContent = item.title;
+
+      body.appendChild(title);
+
+      if (item.description) {
+        const desc = document.createElement('p');
+        desc.className = 'testimonial-card-desc';
+        desc.textContent = item.description;
+        body.appendChild(desc);
+      }
+
+      const footer = document.createElement('div');
+      footer.className = 'testimonial-card-author';
+
+      const avatar = document.createElement('span');
+      avatar.className = 'testimonial-author-avatar';
+      avatar.textContent = initials;
+
+      const authorMeta = document.createElement('div');
+      authorMeta.className = 'testimonial-author-meta';
+
+      const authorName = document.createElement('span');
+      authorName.className = 'testimonial-author-name';
+      authorName.textContent = item.personName;
+
+      const authorRole = document.createElement('span');
+      authorRole.className = 'testimonial-author-tag';
+      authorRole.textContent = 'Testemunho JCP';
+
+      authorMeta.append(authorName, authorRole);
+      footer.append(avatar, authorMeta);
+      body.appendChild(footer);
+
+      card.append(mediaWrap, body);
+
+      card.addEventListener('click', () => openPublicTestimonialVideoModal(item));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openPublicTestimonialVideoModal(item);
+        }
+      });
+
+      grid.appendChild(card);
+    });
+  } catch (err) {
+    grid.innerHTML = `<div class="leaders-loading" style="color:#EF4444;">⚠️ Erro ao carregar testemunhos.</div>`;
+    console.error('[JCP] Erro ao carregar testemunhos públicos:', err);
   }
 }

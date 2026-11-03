@@ -32,12 +32,14 @@
 
   <!-- Estilos da Landing Page -->
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/test-environment.css">
 
   <!-- Supabase CDN (opcional para sincronização de edições) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 
 <body class="bg-night">
+  <div class="test-environment-badge" role="status">AMBIENTE DE TESTE</div>
 
   <!-- Barra de progresso de leitura suave no topo -->
   <div class="scroll-progress-bar" id="scroll-progress"></div>
@@ -61,6 +63,7 @@
           <li><a href="#o-ide" class="nav-link">O IDE</a></li>
           <li><a href="#como-acontece" class="nav-link">Como Funciona</a></li>
           <li><a href="#edicoes" class="nav-link">Edições</a></li>
+          <li><a href="#testemunhos" class="nav-link">Testemunhos</a></li>
           <li><a href="#liderancas" class="nav-link">Lideranças</a></li>
           <li><a href="#contribua" class="nav-link">Contribua</a></li>
         </ul>
@@ -92,6 +95,7 @@
       <li><a href="#o-ide" class="mobile-nav-link">O IDE</a></li>
       <li><a href="#como-acontece" class="mobile-nav-link">Como Acontece</a></li>
       <li><a href="#edicoes" class="mobile-nav-link">Edições</a></li>
+      <li><a href="#testemunhos" class="mobile-nav-link">Testemunhos</a></li>
       <li><a href="#liderancas" class="mobile-nav-link">Nossas Lideranças</a></li>
       <li><a href="#contribua" class="mobile-nav-link">Contribua</a></li>
     </ul>
@@ -670,6 +674,37 @@
     </section>
 
     <!-- ==============================================================================
+         09.5 — TESTEMUNHOS (GALERIA DE VÍDEOS)
+         ============================================================================== -->
+    <section class="section-editorial bg-night testimonials-section" id="testemunhos"
+      style="border-top: 1px solid rgba(255,255,255,0.06);">
+      <div class="container">
+        <div class="reveal-on-scroll" style="text-align: center; max-width: 700px; margin: 0 auto 48px;">
+          <div class="section-kicker" style="justify-content: center;">VIDAS TRANSFORMADAS PELO EVANGELHO</div>
+          <h2 class="section-title-editorial">TESTEMUNHOS</h2>
+          <p class="lead-editorial">
+            Histórias reais de jovens, voluntários e famílias que viveram experiências marcantes com Deus nas edições e
+            missões do Jovens com Propósito.
+          </p>
+        </div>
+
+        <!-- Galeria de Vídeos de Testemunhos (carregada dinamicamente) -->
+        <div class="testimonials-grid" id="testimonials-grid-public">
+          <div class="leaders-loading" id="testimonials-loading">
+            <div class="leaders-loading-spinner"></div>
+            <p>Carregando testemunhos...</p>
+          </div>
+        </div>
+
+        <!-- Estado vazio (sem testemunhos publicados) -->
+        <div class="leaders-empty-state" id="testimonials-empty-state" style="display:none;">
+          <div class="leaders-empty-icon">🎬</div>
+          <p class="leaders-empty-text">Novos vídeos de testemunhos serão publicados em breve.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==============================================================================
          10 — CONTRIBUA COM O PROPÓSITO
          ============================================================================== -->
     <section class="section-editorial bg-night" id="contribua" style="border-top: 1px solid rgba(255,255,255,0.06);">
@@ -857,6 +892,7 @@
             <li><a href="#o-ide">O IDE</a></li>
             <li><a href="#como-acontece">Como Funciona</a></li>
             <li><a href="#edicoes">Edições</a></li>
+            <li><a href="#testemunhos">Testemunhos</a></li>
             <li><a href="#liderancas">Nossas Lideranças</a></li>
             <li><a href="#contribua">Contribua</a></li>
           </ul>
@@ -1319,6 +1355,21 @@
           FINALIZAR MINHA INSCRIÇÃO
         </button>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal 3: REPRODUTOR DE VÍDEO DE TESTEMUNHO -->
+  <div class="jcp-modal" id="modal-video-testemunho" role="dialog" aria-modal="true"
+    aria-labelledby="modal-testemunho-video-title">
+    <div class="modal-dialog modal-dialog-video">
+      <button class="modal-close-btn" id="btn-close-video-testemunho" data-close-modal
+        aria-label="Fechar vídeo">&times;</button>
+      <div class="testimonial-modal-player-wrap" id="modal-testemunho-player-container"></div>
+      <div class="testimonial-modal-info">
+        <span class="testimonial-modal-person" id="modal-testemunho-person-name">—</span>
+        <h3 class="modal-title" id="modal-testemunho-video-title" style="margin-bottom: 6px; font-size: 1.15rem;">—</h3>
+        <p class="modal-subtitle" id="modal-testemunho-video-desc" style="margin: 0;"></p>
+      </div>
     </div>
   </div>
 

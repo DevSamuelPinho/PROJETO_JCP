@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         conteudo:  { title: 'Conteúdos (CMS)', desc: 'Textos institucionais e mensagens da landing page.' },
         lideres:   { title: 'Nossas Lideranças', desc: 'Apresentação institucional e gestão de líderes do JCP.' },
         departamentos: { title: 'Departamentos & Ministérios', desc: 'Organização de departamentos e áreas de atuação.' },
+        testemunhos: { title: 'Testemunhos', desc: 'Galeria de vídeos e depoimentos de vidas impactadas pelo JCP.' },
         usuarios:  { title: 'Usuários & Perfis', desc: 'Gerenciamento de administradores e permissões granulares.' },
         config:    { title: 'Configurações Globais', desc: 'Chave Pix, dados de contribuição e informações oficiais.' },
         logs:      { title: 'Auditoria / Logs', desc: 'Registro de todas as atividades e operações do sistema.' }
@@ -205,6 +206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (targetId === 'midia') loadMedia();
         if (targetId === 'lideres') loadLeaders();
         if (targetId === 'departamentos') loadDepartments();
+        if (targetId === 'testemunhos') loadTestimonials();
     }
 
     navItems.forEach(item => {
@@ -229,7 +231,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function loadAllData() {
         const permissionNames = [
             'dashboard:read', 'editions:read', 'actions:read', 'volunteers:read',
-            'enrollments:read', 'content:read', 'leaders:read'
+            'enrollments:read', 'content:read', 'leaders:read', 'testimonials:read'
         ];
         const permissions = new Map(await Promise.all(permissionNames.map(async permission => [
             permission,
@@ -244,6 +246,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             ['content:read', loadCMS],
             ['leaders:read', loadLeaders],
             ['leaders:read', loadDepartments],
+            ['testimonials:read', loadTestimonials],
             [null, loadSettings]
         ].filter(([permission]) => !permission || permissions.get(permission));
 
@@ -2305,6 +2308,639 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (filterLeaderSearch) filterLeaderSearch.addEventListener('input', () => loadLeaders());
     if (filterLeaderDept) filterLeaderDept.addEventListener('change', () => loadLeaders());
     if (filterLeaderStatus) filterLeaderStatus.addEventListener('change', () => loadLeaders());
+
+    /* ==========================================================================
+       13. GESTÃO DE TESTEMUNHOS (GALERIA DE VÍDEOS)
+       ========================================================================== */
+    const modalTestimonial = document.getElementById('modal-testimonial');
+    const modalTestimonialClose = document.getElementById('modal-testimonial-close');
+    const btnNewTestimonial = document.getElementById('btn-new-testimonial');
+    const btnCancelTestimonial = document.getElementById('btn-cancel-testimonial');
+    const btnSaveTestimonial = document.getElementById('btn-save-testimonial');
+
+    const formTestimonialId = document.getElementById('form-testimonial-id');
+    const formTestimonialTitle = document.getElementById('form-testimonial-title');
+    const formTestimonialName = document.getElementById('form-testimonial-name');
+    const formTestimonialDesc = document.getElementById('form-testimonial-desc');
+    const formTestimonialDescCounter = document.getElementById('form-testimonial-desc-counter');
+    const formTestimonialVideoUrl = document.getElementById('form-testimonial-video-url');
+    const formTestimonialVideoFile = document.getElementById('form-testimonial-video-file');
+    const btnBrowseTestimonialVideo = document.getElementById('btn-browse-testimonial-video');
+    const testimonialVideoFormPreview = document.getElementById('testimonial-video-form-preview');
+    const testimonialVideoFormPlayer = document.getElementById('testimonial-video-form-player');
+    const testimonialVideoSourceBadge = document.getElementById('testimonial-video-source-badge');
+
+    const formTestimonialThumbFile = document.getElementById('form-testimonial-thumb-file');
+    const formTestimonialThumbUrl = document.getElementById('form-testimonial-thumb-url');
+    const btnBrowseTestimonialThumb = document.getElementById('btn-browse-testimonial-thumb');
+    const btnCaptureTestimonialThumb = document.getElementById('btn-capture-testimonial-thumb');
+    const btnRemoveTestimonialThumb = document.getElementById('btn-remove-testimonial-thumb');
+    const testimonialThumbImg = document.getElementById('testimonial-thumb-img');
+    const testimonialThumbEmptyText = document.getElementById('testimonial-thumb-empty-text');
+
+    const formTestimonialStatus = document.getElementById('form-testimonial-status');
+    const formTestimonialOrder = document.getElementById('form-testimonial-order');
+
+    const filterTestimonialSearch = document.getElementById('filter-testimonial-search');
+    const filterTestimonialStatus = document.getElementById('filter-testimonial-status');
+    const testimonialsTableBody = document.getElementById('testimonials-table-body');
+
+    const modalTestimonialPreview = document.getElementById('modal-testimonial-preview');
+    const modalTestimonialPreviewClose = document.getElementById('modal-testimonial-preview-close');
+    const btnCloseTestimonialPreview = document.getElementById('btn-close-testimonial-preview');
+    const previewTestimonialTitle = document.getElementById('preview-testimonial-title');
+    const previewTestimonialPlayer = document.getElementById('preview-testimonial-player');
+    const previewTestimonialPerson = document.getElementById('preview-testimonial-person');
+    const previewTestimonialDesc = document.getElementById('preview-testimonial-desc');
+    const previewTestimonialStatusBadge = document.getElementById('preview-testimonial-status-badge');
+
+    let currentTestimonialThumbData = '';
+
+    function escapeHtmlText(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function parseVideoSource(rawUrl) {
+        const url = (rawUrl || '').trim();
+        if (!url) return { type: 'none', url: '', embedUrl: '', label: '' };
+
+        // YouTube (watch, youtu.be, shorts, embed)
+        const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+        if (ytMatch && ytMatch[1]) {
+            const videoId = ytMatch[1];
+            return {
+                type: 'youtube',
+                videoId,
+                url,
+                embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0`,
+                autoThumb: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+                label: 'YouTube'
+            };
+        }
+
+        // Vimeo
+        const vimeoMatch = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+        if (vimeoMatch && vimeoMatch[1]) {
+            const videoId = vimeoMatch[1];
+            return {
+                type: 'vimeo',
+                videoId,
+                url,
+                embedUrl: `https://player.vimeo.com/video/${videoId}`,
+                autoThumb: '',
+                label: 'Vimeo'
+            };
+        }
+
+        // Data URL ou arquivo de vídeo direto (.mp4, .webm, .ogg)
+        return {
+            type: 'video',
+            url,
+            embedUrl: url,
+            autoThumb: '',
+            label: url.startsWith('data:video/') ? 'Arquivo de Vídeo Local' : 'Vídeo Direto (MP4/WebM)'
+        };
+    }
+
+    function createVideoPlayerElement(videoUrl, posterUrl = '', autoplay = false) {
+        const info = parseVideoSource(videoUrl);
+        if (info.type === 'youtube' || info.type === 'vimeo') {
+            const iframe = document.createElement('iframe');
+            const sep = info.embedUrl.includes('?') ? '&' : '?';
+            iframe.src = autoplay ? `${info.embedUrl}${sep}autoplay=1` : info.embedUrl;
+            iframe.title = 'Reprodutor de vídeo do testemunho';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            iframe.style.cssText = 'width:100%; height:100%; min-height:280px; border:0; border-radius:8px; background:#090D14;';
+            return iframe;
+        }
+        if (info.type === 'video') {
+            const video = document.createElement('video');
+            video.src = info.url;
+            video.controls = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+            if (posterUrl) video.poster = posterUrl;
+            if (autoplay) video.autoplay = true;
+            video.style.cssText = 'width:100%; max-height:420px; border-radius:8px; background:#090D14; display:block;';
+            return video;
+        }
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = 'Vídeo indisponível.';
+        return empty;
+    }
+
+    function updateTestimonialThumbUI(src) {
+        currentTestimonialThumbData = src || '';
+        if (currentTestimonialThumbData) {
+            if (testimonialThumbImg) {
+                testimonialThumbImg.src = currentTestimonialThumbData;
+                testimonialThumbImg.style.display = 'block';
+            }
+            if (testimonialThumbEmptyText) testimonialThumbEmptyText.style.display = 'none';
+            if (btnRemoveTestimonialThumb) btnRemoveTestimonialThumb.style.display = 'inline-flex';
+        } else {
+            if (testimonialThumbImg) {
+                testimonialThumbImg.src = '';
+                testimonialThumbImg.style.display = 'none';
+            }
+            if (testimonialThumbEmptyText) {
+                testimonialThumbEmptyText.textContent = 'Capa Padrão';
+                testimonialThumbEmptyText.style.display = 'block';
+            }
+            if (btnRemoveTestimonialThumb) btnRemoveTestimonialThumb.style.display = 'none';
+        }
+    }
+
+    function renderFormVideoPreview() {
+        if (!testimonialVideoFormPreview || !testimonialVideoFormPlayer) return;
+        const url = formTestimonialVideoUrl ? formTestimonialVideoUrl.value.trim() : '';
+        if (!url) {
+            testimonialVideoFormPlayer.replaceChildren();
+            testimonialVideoFormPreview.style.display = 'none';
+            return;
+        }
+        const info = parseVideoSource(url);
+        if (testimonialVideoSourceBadge) {
+            testimonialVideoSourceBadge.textContent = info.label;
+        }
+        testimonialVideoFormPlayer.replaceChildren(
+            createVideoPlayerElement(url, currentTestimonialThumbData || info.autoThumb || '', false)
+        );
+        testimonialVideoFormPreview.style.display = 'block';
+
+        // Se não houver capa definida e o vídeo for do YouTube, preenche a prévia automática
+        if (!currentTestimonialThumbData && info.autoThumb) {
+            updateTestimonialThumbUI(info.autoThumb);
+            if (formTestimonialThumbUrl && !formTestimonialThumbUrl.value.trim()) {
+                formTestimonialThumbUrl.value = info.autoThumb;
+            }
+        }
+    }
+
+    async function captureFrameFromVideo(videoUrl) {
+        const info = parseVideoSource(videoUrl);
+        if (info.autoThumb) return info.autoThumb;
+        if (info.type !== 'video' || !info.url) {
+            throw new Error('Para links externos sem miniatura automática, envie uma imagem de capa personalizada.');
+        }
+        return new Promise((resolve, reject) => {
+            const video = document.createElement('video');
+            video.crossOrigin = 'anonymous';
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+
+            const cleanup = () => {
+                video.removeAttribute('src');
+                video.load();
+            };
+
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error('Tempo esgotado ao capturar prévia do vídeo.'));
+            }, 6000);
+
+            video.onloadeddata = () => {
+                try {
+                    video.currentTime = Math.min(1.0, (video.duration || 2) * 0.25);
+                } catch {
+                    clearTimeout(timeout);
+                    cleanup();
+                    reject(new Error('Não foi possível posicionar o vídeo para capturar a capa.'));
+                }
+            };
+
+            video.onseeked = () => {
+                clearTimeout(timeout);
+                try {
+                    const maxW = 800;
+                    const rawW = video.videoWidth || 640;
+                    const rawH = video.videoHeight || 360;
+                    const ratio = Math.min(1, maxW / rawW);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(rawW * ratio);
+                    canvas.height = Math.round(rawH * ratio);
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+                    cleanup();
+                    resolve(dataUrl);
+                } catch {
+                    cleanup();
+                    reject(new Error('O navegador bloqueou a captura automática deste vídeo (CORS). Envie uma imagem de capa.'));
+                }
+            };
+
+            video.onerror = () => {
+                clearTimeout(timeout);
+                cleanup();
+                reject(new Error('Não foi possível carregar o vídeo para gerar a capa.'));
+            };
+
+            video.src = info.url;
+        });
+    }
+
+    async function openTestimonialModal(testimonial = null) {
+        const titleEl = document.getElementById('modal-testimonial-title');
+        if (testimonial) {
+            if (titleEl) titleEl.textContent = 'Editar Testemunho';
+            if (formTestimonialId) formTestimonialId.value = testimonial.id;
+            if (formTestimonialTitle) formTestimonialTitle.value = testimonial.title || '';
+            if (formTestimonialName) formTestimonialName.value = testimonial.personName || '';
+            if (formTestimonialDesc) formTestimonialDesc.value = testimonial.description || '';
+            if (formTestimonialVideoUrl) formTestimonialVideoUrl.value = testimonial.videoUrl || '';
+            if (formTestimonialStatus) formTestimonialStatus.value = testimonial.isPublished ? 'published' : 'draft';
+            if (formTestimonialOrder) formTestimonialOrder.value = testimonial.displayOrder || 1;
+            if (formTestimonialThumbUrl) {
+                formTestimonialThumbUrl.value = (testimonial.thumbnailUrl && !testimonial.thumbnailUrl.startsWith('data:'))
+                    ? testimonial.thumbnailUrl
+                    : '';
+            }
+            updateTestimonialThumbUI(testimonial.thumbnailUrl || '');
+        } else {
+            if (titleEl) titleEl.textContent = 'Novo Testemunho';
+            if (formTestimonialId) formTestimonialId.value = '';
+            if (formTestimonialTitle) formTestimonialTitle.value = '';
+            if (formTestimonialName) formTestimonialName.value = '';
+            if (formTestimonialDesc) formTestimonialDesc.value = '';
+            if (formTestimonialVideoUrl) formTestimonialVideoUrl.value = '';
+            if (formTestimonialVideoFile) formTestimonialVideoFile.value = '';
+            if (formTestimonialThumbFile) formTestimonialThumbFile.value = '';
+            if (formTestimonialThumbUrl) formTestimonialThumbUrl.value = '';
+            if (formTestimonialStatus) formTestimonialStatus.value = 'published';
+
+            const allTestimonials = await window.db.getTestimonials();
+            const nextOrder = allTestimonials.length
+                ? Math.max(...allTestimonials.map(t => Number(t.displayOrder) || 0)) + 1
+                : 1;
+            if (formTestimonialOrder) formTestimonialOrder.value = nextOrder;
+            updateTestimonialThumbUI('');
+        }
+
+        if (formTestimonialDesc && formTestimonialDescCounter) {
+            formTestimonialDescCounter.textContent = `${formTestimonialDesc.value.length} / 400`;
+        }
+        renderFormVideoPreview();
+        if (modalTestimonial) modalTestimonial.style.display = 'flex';
+    }
+
+    function closeTestimonialModal() {
+        if (testimonialVideoFormPlayer) testimonialVideoFormPlayer.replaceChildren();
+        if (modalTestimonial) modalTestimonial.style.display = 'none';
+    }
+
+    function closeTestimonialPreviewModal() {
+        if (previewTestimonialPlayer) previewTestimonialPlayer.replaceChildren();
+        if (modalTestimonialPreview) modalTestimonialPreview.style.display = 'none';
+    }
+
+    if (btnNewTestimonial) btnNewTestimonial.addEventListener('click', () => openTestimonialModal());
+    if (btnCancelTestimonial) btnCancelTestimonial.addEventListener('click', closeTestimonialModal);
+    if (modalTestimonialClose) modalTestimonialClose.addEventListener('click', closeTestimonialModal);
+    if (modalTestimonialPreviewClose) modalTestimonialPreviewClose.addEventListener('click', closeTestimonialPreviewModal);
+    if (btnCloseTestimonialPreview) btnCloseTestimonialPreview.addEventListener('click', closeTestimonialPreviewModal);
+
+    if (formTestimonialDesc && formTestimonialDescCounter) {
+        formTestimonialDesc.addEventListener('input', () => {
+            formTestimonialDescCounter.textContent = `${formTestimonialDesc.value.length} / 400`;
+        });
+    }
+
+    let videoPreviewTimer;
+    if (formTestimonialVideoUrl) {
+        formTestimonialVideoUrl.addEventListener('input', () => {
+            clearTimeout(videoPreviewTimer);
+            videoPreviewTimer = setTimeout(renderFormVideoPreview, 300);
+        });
+    }
+
+    if (btnBrowseTestimonialVideo && formTestimonialVideoFile) {
+        btnBrowseTestimonialVideo.addEventListener('click', () => formTestimonialVideoFile.click());
+        formTestimonialVideoFile.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('video/')) {
+                alert('Selecione um arquivo de vídeo válido (.mp4, .webm ou .ogg).');
+                return;
+            }
+            if (file.size > 3.5 * 1024 * 1024) {
+                alert('Para armazenamento direto no navegador, o vídeo deve ter até 3,5 MB. Para vídeos maiores ou em alta definição, utilize um link do YouTube, Vimeo ou URL direta.');
+                formTestimonialVideoFile.value = '';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const dataUrl = ev.target.result;
+                if (formTestimonialVideoUrl) formTestimonialVideoUrl.value = dataUrl;
+                renderFormVideoPreview();
+                showToast('Vídeo carregado com sucesso!');
+                if (!currentTestimonialThumbData) {
+                    try {
+                        const frame = await captureFrameFromVideo(dataUrl);
+                        if (frame) updateTestimonialThumbUI(frame);
+                    } catch {
+                        // Mantém capa padrão se não for possível extrair frame
+                    }
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    if (btnBrowseTestimonialThumb && formTestimonialThumbFile) {
+        btnBrowseTestimonialThumb.addEventListener('click', () => formTestimonialThumbFile.click());
+        formTestimonialThumbFile.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            if (file.size > 10 * 1024 * 1024) {
+                alert('A imagem de capa deve ter no máximo 10MB.');
+                return;
+            }
+            try {
+                const compressed = await compressImageFile(file, 960, 540);
+                if (formTestimonialThumbUrl) formTestimonialThumbUrl.value = '';
+                updateTestimonialThumbUI(compressed);
+                showToast('Thumbnail carregada e otimizada!');
+            } catch (err) {
+                alert(err.message || 'Erro ao processar thumbnail.');
+            }
+        });
+    }
+
+    if (formTestimonialThumbUrl) {
+        formTestimonialThumbUrl.addEventListener('input', () => {
+            const val = formTestimonialThumbUrl.value.trim();
+            if (val) updateTestimonialThumbUI(val);
+            else if (!formTestimonialThumbFile?.files?.length) updateTestimonialThumbUI('');
+        });
+    }
+
+    if (btnCaptureTestimonialThumb) {
+        btnCaptureTestimonialThumb.addEventListener('click', async () => {
+            const videoUrl = formTestimonialVideoUrl ? formTestimonialVideoUrl.value.trim() : '';
+            if (!videoUrl) {
+                alert('Informe ou selecione o vídeo primeiro para gerar a prévia da capa.');
+                return;
+            }
+            try {
+                const thumb = await captureFrameFromVideo(videoUrl);
+                updateTestimonialThumbUI(thumb);
+                if (formTestimonialThumbUrl && !thumb.startsWith('data:')) {
+                    formTestimonialThumbUrl.value = thumb;
+                }
+                showToast('Prévia de capa gerada com sucesso!');
+            } catch (err) {
+                alert(err.message || 'Não foi possível gerar a capa automaticamente.');
+            }
+        });
+    }
+
+    if (btnRemoveTestimonialThumb) {
+        btnRemoveTestimonialThumb.addEventListener('click', () => {
+            if (formTestimonialThumbFile) formTestimonialThumbFile.value = '';
+            if (formTestimonialThumbUrl) formTestimonialThumbUrl.value = '';
+            updateTestimonialThumbUI('');
+        });
+    }
+
+    if (btnSaveTestimonial) {
+        btnSaveTestimonial.addEventListener('click', async () => {
+            const id = formTestimonialId ? formTestimonialId.value : '';
+            const title = formTestimonialTitle ? formTestimonialTitle.value.trim() : '';
+            const personName = formTestimonialName ? formTestimonialName.value.trim() : '';
+            const description = formTestimonialDesc ? formTestimonialDesc.value.trim() : '';
+            const videoUrl = formTestimonialVideoUrl ? formTestimonialVideoUrl.value.trim() : '';
+            const status = formTestimonialStatus ? formTestimonialStatus.value : 'published';
+            const displayOrder = formTestimonialOrder ? (parseInt(formTestimonialOrder.value, 10) || 1) : 1;
+            const thumbnailUrl = currentTestimonialThumbData || (formTestimonialThumbUrl ? formTestimonialThumbUrl.value.trim() : '');
+
+            if (!title) {
+                alert('O título do testemunho é obrigatório.');
+                formTestimonialTitle?.focus();
+                return;
+            }
+            if (!personName) {
+                alert('O nome da pessoa é obrigatório.');
+                formTestimonialName?.focus();
+                return;
+            }
+            if (!videoUrl) {
+                alert('Informe o link ou arquivo de vídeo do testemunho.');
+                formTestimonialVideoUrl?.focus();
+                return;
+            }
+
+            btnSaveTestimonial.disabled = true;
+            try {
+                const payload = {
+                    title,
+                    personName,
+                    description,
+                    videoUrl,
+                    thumbnailUrl,
+                    status,
+                    isPublished: status === 'published',
+                    displayOrder
+                };
+                if (id) {
+                    await window.db.updateTestimonial(id, payload);
+                    showToast('Testemunho atualizado com sucesso!');
+                } else {
+                    await window.db.createTestimonial(payload);
+                    showToast('Testemunho cadastrado com sucesso!');
+                }
+                closeTestimonialModal();
+                await loadTestimonials();
+            } catch (err) {
+                console.error('Erro ao salvar testemunho:', err);
+                alert(err.message || 'Erro ao salvar testemunho.');
+            } finally {
+                btnSaveTestimonial.disabled = false;
+            }
+        });
+    }
+
+    async function loadTestimonials() {
+        if (!testimonialsTableBody) return;
+        try {
+            const search = filterTestimonialSearch ? filterTestimonialSearch.value.trim() : '';
+            const status = filterTestimonialStatus ? filterTestimonialStatus.value : '';
+            const items = await window.db.getTestimonials({ search, status });
+
+            if (!items.length) {
+                testimonialsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                            Nenhum testemunho encontrado. Clique em "Novo Testemunho" para adicionar vídeos à galeria.
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            testimonialsTableBody.innerHTML = items.map((t, index) => {
+                const info = parseVideoSource(t.videoUrl);
+                const thumbSrc = t.thumbnailUrl || info.autoThumb || 'assets/images/noite_clamor.jpg';
+                const safeTitle = escapeHtmlText(t.title);
+                const safePerson = escapeHtmlText(t.personName);
+                const safeDesc = escapeHtmlText(t.description || '');
+                const formattedDate = t.createdAt
+                    ? new Date(t.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                    : '—';
+                const formattedTime = t.createdAt
+                    ? new Date(t.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : '';
+
+                const pubBadge = t.isPublished
+                    ? '<span class="badge-paid" style="background: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.3);">Publicado</span>'
+                    : '<span class="badge-pending" style="background: rgba(148, 163, 184, 0.15); color: #94A3B8; border: 1px solid rgba(148, 163, 184, 0.3);">Rascunho</span>';
+
+                const togglePubTitle = t.isPublished ? 'Desativar publicação (mudar para rascunho)' : 'Ativar publicação no site';
+                const togglePubIcon = t.isPublished ? 'ph-eye-slash' : 'ph-eye';
+
+                return `
+                    <tr>
+                        <td>
+                            <button type="button" class="testimonial-admin-thumb-btn" onclick="openPreviewTestimonial('${t.id}')" title="Clique para assistir à prévia do vídeo">
+                                <img src="${escapeHtmlText(thumbSrc)}" alt="${safeTitle}" onerror="this.src='assets/images/noite_clamor.jpg'">
+                                <span class="testimonial-admin-play-badge"><i class="ph-fill ph-play"></i></span>
+                            </button>
+                        </td>
+                        <td>
+                            <strong style="color: var(--text-color); font-size: 0.92rem; display: block;">${safeTitle}</strong>
+                            <div style="font-size: 0.8rem; color: var(--primary); font-weight: 700; margin-top: 2px;">
+                                <i class="ph ph-user"></i> ${safePerson}
+                            </div>
+                            ${safeDesc ? `<div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 4px; max-width: 420px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${safeDesc}</div>` : ''}
+                        </td>
+                        <td style="text-align: center;">
+                            <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                <span class="order-badge">#${t.displayOrder || (index + 1)}</span>
+                                <div style="display: flex; flex-direction: column; gap: 2px;">
+                                    <button type="button" class="btn-icon" style="width:22px;height:20px;font-size:11px;" title="Subir posição" onclick="moveTestimonialOrder('${t.id}', -1)" ${index === 0 ? 'disabled' : ''}>
+                                        <i class="ph ph-caret-up"></i>
+                                    </button>
+                                    <button type="button" class="btn-icon" style="width:22px;height:20px;font-size:11px;" title="Descer posição" onclick="moveTestimonialOrder('${t.id}', 1)" ${index === items.length - 1 ? 'disabled' : ''}>
+                                        <i class="ph ph-caret-down"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </td>
+                        <td>${pubBadge}</td>
+                        <td>
+                            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-color);">${formattedDate}</div>
+                            ${formattedTime ? `<div style="font-size: 0.72rem; color: var(--text-muted);">${formattedTime}</div>` : ''}
+                        </td>
+                        <td style="text-align: right;">
+                            <div style="display: inline-flex; gap: 6px;">
+                                <button class="btn-icon" title="Visualizar prévia do vídeo" onclick="openPreviewTestimonial('${t.id}')">
+                                    <i class="ph ph-play-circle"></i>
+                                </button>
+                                <button class="btn-icon" title="${togglePubTitle}" onclick="togglePublishTestimonial('${t.id}')">
+                                    <i class="ph ${togglePubIcon}"></i>
+                                </button>
+                                <button class="btn-icon" title="Editar testemunho" onclick="openEditTestimonial('${t.id}')">
+                                    <i class="ph ph-pencil-simple"></i>
+                                </button>
+                                <button class="btn-icon text-danger" title="Excluir testemunho" onclick="deleteTestimonialConfirm('${t.id}')">
+                                    <i class="ph ph-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>`;
+            }).join('');
+        } catch (err) {
+            console.error('Erro ao carregar testemunhos:', err);
+            testimonialsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 30px; color: #EF4444;">
+                        Erro ao carregar testemunhos: ${escapeHtmlText(err.message || 'Erro inesperado')}
+                    </td>
+                </tr>`;
+        }
+    }
+
+    window.openPreviewTestimonial = async (id) => {
+        const item = await window.db.getTestimonialById(id);
+        if (!item || !modalTestimonialPreview) return;
+        const info = parseVideoSource(item.videoUrl);
+        if (previewTestimonialTitle) previewTestimonialTitle.textContent = item.title || 'Prévia do Testemunho';
+        if (previewTestimonialPerson) previewTestimonialPerson.textContent = item.personName || '—';
+        if (previewTestimonialDesc) previewTestimonialDesc.textContent = item.description || '';
+        if (previewTestimonialStatusBadge) {
+            previewTestimonialStatusBadge.innerHTML = item.isPublished
+                ? '<span class="badge-paid">Publicado</span>'
+                : '<span class="badge-pending">Rascunho</span>';
+        }
+        if (previewTestimonialPlayer) {
+            previewTestimonialPlayer.replaceChildren(
+                createVideoPlayerElement(item.videoUrl, item.thumbnailUrl || info.autoThumb || '', true)
+            );
+        }
+        modalTestimonialPreview.style.display = 'flex';
+    };
+
+    window.openEditTestimonial = async (id) => {
+        const item = await window.db.getTestimonialById(id);
+        if (item) openTestimonialModal(item);
+    };
+
+    window.togglePublishTestimonial = async (id) => {
+        try {
+            const updated = await window.db.toggleTestimonialPublish(id);
+            showToast(updated.isPublished ? 'Testemunho publicado na galeria!' : 'Testemunho alterado para rascunho.');
+            await loadTestimonials();
+        } catch (err) {
+            alert(err.message || 'Erro ao alterar status de publicação.');
+        }
+    };
+
+    window.moveTestimonialOrder = async (id, delta) => {
+        try {
+            const items = await window.db.getTestimonials();
+            const idx = items.findIndex(t => t.id === id);
+            const swapIdx = idx + delta;
+            if (idx === -1 || swapIdx < 0 || swapIdx >= items.length) return;
+
+            const current = items[idx];
+            const neighbor = items[swapIdx];
+            const currentOrder = Number(current.displayOrder) || (idx + 1);
+            let neighborOrder = Number(neighbor.displayOrder) || (swapIdx + 1);
+            if (currentOrder === neighborOrder) {
+                neighborOrder = currentOrder + delta;
+            }
+
+            await window.db.updateTestimonial(current.id, { displayOrder: neighborOrder });
+            await window.db.updateTestimonial(neighbor.id, { displayOrder: currentOrder });
+            showToast('Ordem de exibição atualizada!');
+            await loadTestimonials();
+        } catch (err) {
+            alert(err.message || 'Erro ao reorganizar ordem.');
+        }
+    };
+
+    window.deleteTestimonialConfirm = async (id) => {
+        const item = await window.db.getTestimonialById(id);
+        const label = item ? `"${item.title}" (${item.personName})` : 'este testemunho';
+        if (!confirm(`Deseja realmente excluir o testemunho ${label}? Esta ação não pode ser desfeita.`)) return;
+        try {
+            await window.db.deleteTestimonial(id);
+            showToast('Testemunho excluído com sucesso.');
+            await loadTestimonials();
+        } catch (err) {
+            alert(err.message || 'Erro ao excluir testemunho.');
+        }
+    };
+
+    if (filterTestimonialSearch) filterTestimonialSearch.addEventListener('input', () => loadTestimonials());
+    if (filterTestimonialStatus) filterTestimonialStatus.addEventListener('change', () => loadTestimonials());
 
     /* ==========================================================================
        BUSCA GLOBAL
